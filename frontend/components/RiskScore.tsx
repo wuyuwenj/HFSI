@@ -2,9 +2,9 @@ import React from 'react';
 
 const RiskScore: React.FC<{ score: number }> = ({ score }) => {
   const getScoreColor = () => {
-    if (score > 75) return 'text-red-500';
-    if (score > 50) return 'text-amber-500';
-    return 'text-green-500';
+    if (score > 75) return 'text-green-400';
+    if (score > 50) return 'text-amber-400';
+    return 'text-red-400';
   };
 
   const circumference = 2 * Math.PI * 45;
@@ -12,7 +12,7 @@ const RiskScore: React.FC<{ score: number }> = ({ score }) => {
 
   return (
     <div className="bg-brand-dark p-6 rounded-lg shadow-lg flex flex-col items-center justify-center">
-      <h2 className="text-xl font-bold text-white mb-4">Wrongful Conviction Risk</h2>
+      <h2 className="text-xl font-bold text-white mb-4">Innocence Score</h2>
       <div className="relative w-40 h-40">
         <svg className="w-full h-full" viewBox="0 0 100 100">
           {/* Background circle */}
