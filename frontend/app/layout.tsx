@@ -5,7 +5,7 @@ import './globals.css';
 const inter = Inter({ subsets: ['latin'] });
 
 export const metadata: Metadata = {
-  title: 'VeriJudex: AI Judicial Decision Support',
+  title: 'Evidex: AI Judicial Decision Support',
   description: 'An AI-powered judicial assistant that analyzes case documents to highlight critical inconsistencies, eliminate redundancies, and surface key evidence patterns, presenting judges with a clear, concise decision-making dashboard.',
 };
 

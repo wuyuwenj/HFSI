@@ -194,7 +194,7 @@ const transcribeAudioFile = async (file: File): Promise<string> => {
     };
 
     const response = await ai.models.generateContent({
-      model: "gemini-2.0-flash",
+      model: "gemini-2.5-flash",
       contents: [audioPart, textPart],
       config: {
         temperature: 0.1,
@@ -318,7 +318,7 @@ const analyzeCaseDocuments = async (
 ): Promise<CaseAnalysis> => {
   try {
     const promptText = `
-      You are **VeriJudex**, an AI-powered judicial assistant specializing in case document analysis. Your primary function is to evaluate transcripts and evidence to determine the strength of the case against the defendant, operating under the strictest legal standards.
+      You are **Evidex**, an AI-powered judicial assistant specializing in case document analysis. Your primary function is to evaluate transcripts and evidence to determine the strength of the case against the defendant, operating under the strictest legal standards.
 
       Your analysis must adhere to the following **Core Legal Principles**:
       1.  **Burden of Proof Standard (100% Certainty for Conviction):** The defendant can only be convicted if there is **100% certainty of guilt** (beyond a reasonable doubt). Any doubt, uncertainty, or gap in evidence **must benefit the defendant**. Testimony that "might be true" or "could be true" but cannot be proven with certainty **cannot be used for conviction**.
@@ -339,6 +339,77 @@ const analyzeCaseDocuments = async (
       * **Expert Testimony Issues:** Flag reliance on outdated or contested forensic methods.
       * **Witness Credibility Problems:** Note signs of unreliable eyewitness identification (e.g., poor viewing conditions, suggestive procedures).
       * **Logical Conflicts:** Pay attention to discrepancies in **time logs** and movements across different testimonials and log these in timelineEvents and inconsistencies.
+      * **Prosecutorial Misconduct:** Identify Brady violations (withheld exculpatory evidence), improper witness coaching, prejudicial statements, or suppression of favorable evidence.
+      * **Incentivized Testimony:** Flag testimony from jailhouse informants, witnesses receiving deals/immunity, reduced sentences, or financial incentives.
+      * **Defense Inadequacy:** Note failure to call key witnesses, lack of investigation, missed objections, or ineffective cross-examination by defense counsel.
+      * **Alternative Suspects:** Document other plausible perpetrators not investigated or evidence pointing to someone else.
+      * **Forensic Contamination:** Identify lab errors, sample contamination, improper testing procedures, or questionable forensic practices.
+      * **Recantations:** Flag any witnesses who later recanted testimony or significantly changed their statements.
+      * **Physical Impossibility:** Note timeline impossibilities where defendant could not physically have committed the crime.
+      * **Missing Expected Evidence:** Document DNA testing not performed when available, security footage not reviewed, or key witnesses not interviewed.
+      * **Bias Indicators:** Identify suggestive lineups, leading questions during interrogation, or confirmation bias in the investigation.
+      * **Motive Analysis:** Note absence of clear motive or evidence suggesting motive belongs to another suspect.
+
+      **INNOCENCE SCORE CALCULATION METHODOLOGY:**
+
+      Calculate the final riskScore (0-100, where 100 = highly likely innocent, 0 = clearly guilty) using this systematic approach:
+
+      **BASE SCORE: 50** (presumption of innocence baseline)
+
+      **ADD POINTS for Innocence Indicators (Maximum +50 possible):**
+
+      CRITICAL ISSUES (8-10 points each):
+      * Coercion markers ("I didn't do this", forced confession): +10
+      * Brady violations/withheld exculpatory evidence: +10
+      * Physical impossibility of defendant committing crime: +10
+      * Alternative suspect with strong evidence: +9
+      * Witness recantation of key testimony: +9
+
+      MAJOR ISSUES (5-7 points each):
+      * Procedural violations (Miranda, chain of custody): +7
+      * Incentivized testimony (jailhouse informant, deals): +7
+      * Unexamined/unverified alibi evidence: +7
+      * Missing critical evidence (untested DNA, unwatched footage): +6
+      * Defense inadequacy/ineffective counsel: +6
+      * Forensic contamination or lab errors: +6
+
+      SIGNIFICANT ISSUES (3-4 points each):
+      * Major testimonial inconsistencies between witnesses: +4
+      * Witness credibility problems (poor conditions, suggestive ID): +4
+      * Expert testimony issues (outdated/contested methods): +4
+      * Timeline/logical conflicts in prosecution case: +4
+      * Bias indicators (suggestive lineup, leading questions): +3
+      * Absence of clear motive: +3
+
+      MINOR ISSUES (1-2 points each):
+      * Minor inconsistencies within testimony: +2
+      * Prosecutorial misconduct (non-Brady): +2
+      * Each additional unverified evidence piece: +1
+
+      **SUBTRACT POINTS for Guilt Indicators (Maximum -50 possible):**
+      * Voluntary, detailed confession with no coercion signs: -15
+      * Strong DNA/fingerprint match with proper chain of custody: -12
+      * Multiple independent credible eyewitnesses: -10
+      * Clear motive with supporting evidence: -8
+      * Consistent prosecution timeline with no conflicts: -7
+      * Strong circumstantial evidence pattern: -5
+      * Each piece of High reliability evidence: -3
+
+      **SCORING RULES:**
+      1. Count each issue only once (even if it appears multiple times)
+      2. For severity conflicts, use the highest applicable score
+      3. Cap final score between 0-100
+      4. Round to nearest integer
+      5. Document in your analysis which factors contributed most significantly
+
+      **INTERPRETATION GUIDE:**
+      * 85-100: Extremely high likelihood of innocence
+      * 70-84: Strong indicators of potential innocence
+      * 55-69: Significant reasonable doubt exists
+      * 40-54: Mixed evidence, some concerns
+      * 25-39: Evidence leans toward guilt but some issues exist
+      * 10-24: Strong evidence of guilt with minor issues
+      * 0-9: Overwhelming evidence of guilt
     `;
 
     // Build contents array with text and PDFs
@@ -502,6 +573,7 @@ export async function POST(request: Request) {
     const documents = formData.get("documents") as string || "";
     const pdfFiles = formData.getAll("pdfFiles") as File[];
     const audioFiles = formData.getAll("audioFiles") as File[];
+    const mode = formData.get("mode") as string || "single";
 
     // Validate that we have either text, files, or audio
     if ((!documents || documents.trim() === "") && pdfFiles.length === 0 && audioFiles.length === 0) {
@@ -511,56 +583,59 @@ export async function POST(request: Request) {
       );
     }
 
-    // Detect if we have multiple people in the uploaded files
-    const detection = await detectMultiplePeople(documents, pdfFiles, audioFiles);
+    // Check if we're in bulk mode
+    if (mode === 'bulk' && pdfFiles.length > 0) {
+      // In bulk mode, detect if we have multiple people in the uploaded files
+      const detection = await detectMultiplePeople(documents, pdfFiles, audioFiles);
 
-    if (detection.multiplePeople && detection.people.length > 1) {
-      // Multiple people detected - analyze each separately
-      console.log(`Detected ${detection.people.length} different people, analyzing separately...`);
+      if (detection.multiplePeople && detection.people.length > 1) {
+        // Multiple people detected - analyze each separately
+        console.log(`Detected ${detection.people.length} different people, analyzing separately...`);
 
-      const savedAnalyses = [];
+        const savedAnalyses = [];
 
-      for (const person of detection.people) {
-        console.log(`Analyzing case for: ${person.name}`);
+        for (const person of detection.people) {
+          console.log(`Analyzing case for: ${person.name}`);
 
-        // Filter files for this person
-        const personFiles = person.fileIndices.map(idx => pdfFiles[idx]).filter(f => f !== undefined);
+          // Filter files for this person
+          const personFiles = person.fileIndices.map(idx => pdfFiles[idx]).filter(f => f !== undefined);
 
-        // Analyze this person's documents
-        const analysis = await analyzeCaseDocuments("", personFiles, []);
+          // Analyze this person's documents
+          const analysis = await analyzeCaseDocuments("", personFiles, []);
 
-        // Save to database
-        const savedAnalysis = await saveAnalysisToDatabase(person.name, analysis);
-        savedAnalyses.push(savedAnalysis);
+          // Save to database
+          const savedAnalysis = await saveAnalysisToDatabase(person.name, analysis);
+          savedAnalyses.push(savedAnalysis);
+        }
+
+        // Return bulk results with database IDs
+        return NextResponse.json({
+          bulk: true,
+          count: savedAnalyses.length,
+          analyses: savedAnalyses.map(a => ({
+            id: a.id,
+            caseName: a.caseName,
+            riskScore: a.riskScore,
+          })),
+        });
       }
-
-      // Return bulk results with database IDs
-      return NextResponse.json({
-        bulk: true,
-        count: savedAnalyses.length,
-        analyses: savedAnalyses.map(a => ({
-          id: a.id,
-          caseName: a.caseName,
-          riskScore: a.riskScore,
-        })),
-      });
-    } else {
-      // Single person - analyze normally
-      const analysisResult = await analyzeCaseDocuments(documents, pdfFiles, audioFiles);
-
-      // Save to database
-      const savedAnalysis = await saveAnalysisToDatabase(
-        analysisResult.personName || 'Unknown Case',
-        analysisResult
-      );
-
-      return NextResponse.json({
-        bulk: false,
-        id: savedAnalysis.id,
-        caseName: savedAnalysis.caseName,
-        riskScore: savedAnalysis.riskScore,
-      });
     }
+
+    // Single person mode or no multiple people detected - analyze as single case
+    const analysisResult = await analyzeCaseDocuments(documents, pdfFiles, audioFiles);
+
+    // Save to database
+    const savedAnalysis = await saveAnalysisToDatabase(
+      analysisResult.personName || 'Unknown Case',
+      analysisResult
+    );
+
+    return NextResponse.json({
+      bulk: false,
+      id: savedAnalysis.id,
+      caseName: savedAnalysis.caseName,
+      riskScore: savedAnalysis.riskScore,
+    });
   } catch (error) {
     console.error("API Error in /api/analyze:", error);
     const errorMessage =

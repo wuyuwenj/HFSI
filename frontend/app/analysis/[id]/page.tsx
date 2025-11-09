@@ -27,8 +27,8 @@ const AnalysisDetailPage: React.FC = () => {
         const response = await fetch(`/api/analyses/${id}`);
 
         if (!response.ok) {
-          // Analysis not found, redirect to home
-          router.push('/');
+          // Analysis not found, redirect to dashboard
+          router.push('/dashboard');
           return;
         }
 
@@ -56,7 +56,7 @@ const AnalysisDetailPage: React.FC = () => {
         setLoading(false);
       } catch (error) {
         console.error('Error loading analysis:', error);
-        router.push('/');
+        router.push('/dashboard');
       }
     };
 
@@ -64,7 +64,7 @@ const AnalysisDetailPage: React.FC = () => {
   }, [params.id, router]);
 
   const handleBackToOverview = () => {
-    router.push('/');
+    router.push('/dashboard');
   };
 
   if (loading) {
@@ -92,7 +92,7 @@ const AnalysisDetailPage: React.FC = () => {
               <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
                 <path fillRule="evenodd" d="M9.707 16.707a1 1 0 01-1.414 0l-6-6a1 1 0 010-1.414l6-6a1 1 0 011.414 1.414L5.414 9H17a1 1 0 110 2H5.414l4.293 4.293a1 1 0 010 1.414z" clipRule="evenodd" />
               </svg>
-              Back to Overview
+              Back to Dashboard
             </button>
             <h1 className="text-3xl font-bold text-white">{caseName}</h1>
             <p className="text-gray-400 text-sm mt-1">

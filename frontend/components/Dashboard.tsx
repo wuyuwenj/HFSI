@@ -17,7 +17,7 @@ const Dashboard: React.FC<DashboardProps> = ({ analysis, onReset }) => {
     <div className="min-h-screen bg-slate-900 text-gray-200 p-4 sm:p-6 lg:p-8">
       <header className="flex justify-between items-center mb-6 pb-4 border-b border-slate-700">
         <div>
-          <h1 className="text-3xl font-bold text-white">VeriJudex Analysis Dashboard</h1>
+          <h1 className="text-3xl font-bold text-white">Evidex Analysis Dashboard</h1>
           <p className="text-blue-300">Case Analysis Complete</p>
         </div>
         <button
@@ -95,15 +95,15 @@ const Dashboard: React.FC<DashboardProps> = ({ analysis, onReset }) => {
 
       {/* Bottom Navigation */}
       <div className="mt-8 flex justify-center gap-4">
-        <button
-          onClick={onReset}
+        <a
+          href="/dashboard"
           className="py-3 px-6 bg-slate-700 text-white font-semibold rounded-md hover:bg-slate-600 transition duration-200 flex items-center gap-2"
         >
           <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
             <path fillRule="evenodd" d="M9.707 16.707a1 1 0 01-1.414 0l-6-6a1 1 0 010-1.414l6-6a1 1 0 011.414 1.414L5.414 9H17a1 1 0 110 2H5.414l4.293 4.293a1 1 0 010 1.414z" clipRule="evenodd" />
           </svg>
-          Back to Overview
-        </button>
+          Back to Dashboard
+        </a>
       </div>
     </div>
   );

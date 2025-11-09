@@ -41,6 +41,12 @@ export interface KeyQuote {
   context: string;
 }
 
+export interface TranscriptionEntry {
+  timestamp: string;
+  speaker: string;
+  dialogue: string;
+}
+
 export interface CaseAnalysis {
   summary: string;
   personName: string;

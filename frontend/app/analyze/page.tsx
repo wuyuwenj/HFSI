@@ -16,132 +16,98 @@ const AnalyzePage: React.FC = () => {
   const [progress, setProgress] = useState<number>(0);
   const [totalCases, setTotalCases] = useState<number>(0);
 
-  const handleAnalyze = useCallback(async (documents: string, pdfFiles?: File[], audioFiles?: File[]) => {
+  const handleAnalyze = useCallback(async (documents: string, pdfFiles?: File[], audioFiles?: File[], mode?: 'detailed' | 'bulk') => {
     setIsLoading(true);
     setError(null);
     setProgress(0);
     setTotalCases(0);
-    setLoadingMessage("Detecting cases...");
-    setLoadingSubMessage("Analyzing uploaded documents...");
+    setLoadingMessage("Analyzing case documents...");
+    setLoadingSubMessage("Processing uploaded documents...");
 
     try {
-      // Step 1: Detect if there are multiple people
-      const detectFormData = new FormData();
-      detectFormData.append('documents', documents);
+      // Determine the mode based on whether we have multiple files or single case
+      const isBulkMode = mode === 'bulk' || (pdfFiles && pdfFiles.length > 1 && !documents && (!audioFiles || audioFiles.length === 0));
 
-      if (pdfFiles && pdfFiles.length > 0) {
-        pdfFiles.forEach((file) => {
-          detectFormData.append('pdfFiles', file);
-        });
-      }
+      if (isBulkMode) {
+        // Bulk mode - use the bulk analyze endpoint
+        setLoadingMessage("Processing bulk analysis...");
+        setLoadingSubMessage("Detecting and analyzing multiple cases...");
 
-      const detectResponse = await fetch('/api/detect', {
-        method: 'POST',
-        body: detectFormData,
-      });
-
-      if (!detectResponse.ok) {
-        throw new Error('Failed to detect cases');
-      }
-
-      const detection = await detectResponse.json();
-
-      // Step 2: Check if multiple people detected
-      if (detection.multiplePeople && detection.people.length > 1) {
-        // Multiple people detected - analyze each one separately with progress tracking
-        const peopleCount = detection.people.length;
-        setTotalCases(peopleCount);
-        setLoadingMessage(`Analyzing ${peopleCount} cases...`);
-        setLoadingSubMessage("Processing each case individually...");
-
-        const analysisIds: string[] = [];
-
-        for (let i = 0; i < detection.people.length; i++) {
-          const person = detection.people[i];
-          setLoadingSubMessage(`Analyzing case ${i + 1} of ${peopleCount}: ${person.name}`);
-
-          // Create FormData for this specific person's files
-          const personFormData = new FormData();
-          personFormData.append('documents', documents);
-
-          // Add only the files that belong to this person
-          if (pdfFiles && pdfFiles.length > 0) {
-            person.fileIndices.forEach((fileIndex: number) => {
-              if (fileIndex < pdfFiles.length) {
-                personFormData.append('pdfFiles', pdfFiles[fileIndex]);
-              }
-            });
-          }
-
-          if (audioFiles && audioFiles.length > 0) {
-            person.fileIndices.forEach((fileIndex: number) => {
-              const audioIndex = fileIndex - (pdfFiles?.length || 0);
-              if (audioIndex >= 0 && audioIndex < audioFiles.length) {
-                personFormData.append('audioFiles', audioFiles[audioIndex]);
-              }
-            });
-          }
-
-          // Analyze this person's case
-          console.log(`Analyzing person ${i + 1}/${peopleCount}: ${person.name}`);
-          const analyzeResponse = await fetch('/api/analyze-single', {
-            method: 'POST',
-            body: personFormData,
-          });
-
-          if (!analyzeResponse.ok) {
-            const errorData = await analyzeResponse.json();
-            console.error(`Failed to analyze ${person.name}:`, errorData);
-            throw new Error(`Failed to analyze case for ${person.name}: ${errorData.error || 'Unknown error'}`);
-          }
-
-          const analyzeResult = await analyzeResponse.json();
-          console.log(`Successfully analyzed ${person.name}, ID: ${analyzeResult.id}`);
-          analysisIds.push(analyzeResult.id);
-
-          // Update progress
-          setProgress(i + 1);
-        }
-
-        // All cases analyzed - redirect to overview
-        setLoadingMessage("Complete!");
-        setLoadingSubMessage(`Successfully analyzed ${peopleCount} cases`);
-
-        setTimeout(() => {
-          alert(`Successfully analyzed ${peopleCount} cases! Redirecting to overview...`);
-          window.location.href = '/'; // Full page reload to show new data
-        }, 500);
-      } else {
-        // Single person - analyze normally
-        setLoadingMessage("Analyzing case...");
-        setLoadingSubMessage("Processing documents...");
-
-        const analyzeFormData = new FormData();
-        analyzeFormData.append('documents', documents);
+        const formData = new FormData();
+        formData.append('documents', documents);
+        formData.append('mode', 'bulk');
 
         if (pdfFiles && pdfFiles.length > 0) {
           pdfFiles.forEach((file) => {
-            analyzeFormData.append('pdfFiles', file);
+            formData.append('pdfFiles', file);
           });
         }
 
         if (audioFiles && audioFiles.length > 0) {
           audioFiles.forEach((file) => {
-            analyzeFormData.append('audioFiles', file);
+            formData.append('audioFiles', file);
           });
         }
 
-        const analyzeResponse = await fetch('/api/analyze-single', {
+        const response = await fetch('/api/analyze', {
           method: 'POST',
-          body: analyzeFormData,
+          body: formData,
         });
 
-        if (!analyzeResponse.ok) {
-          const errorData = await analyzeResponse.json();
+        if (!response.ok) {
+          const errorData = await response.json();
+          throw new Error(errorData.error || 'Failed to analyze cases');
+        }
+
+        const result = await response.json();
+
+        if (result.bulk && result.analyses) {
+          // Multiple cases were analyzed
+          setLoadingMessage("Complete!");
+          setLoadingSubMessage(`Successfully analyzed ${result.count} cases`);
+
+          setTimeout(() => {
+            alert(`Successfully analyzed ${result.count} cases! Redirecting to dashboard...`);
+            window.location.href = '/dashboard'; // Full page reload to show new data
+          }, 500);
+        } else if (result.id) {
+          // Single case result from bulk mode (shouldn't happen but handle it)
+          router.push(`/analysis/${result.id}`);
+        } else {
+          throw new Error('Invalid response format from server.');
+        }
+      } else {
+        // Single person mode - analyze normally
+        setLoadingMessage("Analyzing case...");
+        setLoadingSubMessage("Processing documents...");
+
+        const formData = new FormData();
+        formData.append('documents', documents);
+        formData.append('mode', 'single');
+
+        if (pdfFiles && pdfFiles.length > 0) {
+          pdfFiles.forEach((file) => {
+            formData.append('pdfFiles', file);
+          });
+        }
+
+        if (audioFiles && audioFiles.length > 0) {
+          audioFiles.forEach((file) => {
+            formData.append('audioFiles', file);
+          });
+        }
+
+        const response = await fetch('/api/analyze-single', {
+          method: 'POST',
+          body: formData,
+        });
+
+        if (!response.ok) {
+          const errorData = await response.json();
           throw new Error(errorData.error || 'Failed to analyze case');
         }
 
-        const result = await analyzeResponse.json();
+        const result = await response.json();
 
         if (result.id) {
           router.push(`/analysis/${result.id}`);
