@@ -83,16 +83,20 @@ const AnalyzePage: React.FC = () => {
           }
 
           // Analyze this person's case
+          console.log(`Analyzing person ${i + 1}/${peopleCount}: ${person.name}`);
           const analyzeResponse = await fetch('/api/analyze-single', {
             method: 'POST',
             body: personFormData,
           });
 
           if (!analyzeResponse.ok) {
-            throw new Error(`Failed to analyze case for ${person.name}`);
+            const errorData = await analyzeResponse.json();
+            console.error(`Failed to analyze ${person.name}:`, errorData);
+            throw new Error(`Failed to analyze case for ${person.name}: ${errorData.error || 'Unknown error'}`);
           }
 
           const analyzeResult = await analyzeResponse.json();
+          console.log(`Successfully analyzed ${person.name}, ID: ${analyzeResult.id}`);
           analysisIds.push(analyzeResult.id);
 
           // Update progress
@@ -105,7 +109,7 @@ const AnalyzePage: React.FC = () => {
 
         setTimeout(() => {
           alert(`Successfully analyzed ${peopleCount} cases! Redirecting to overview...`);
-          router.push('/');
+          window.location.href = '/'; // Full page reload to show new data
         }, 500);
       } else {
         // Single person - analyze normally

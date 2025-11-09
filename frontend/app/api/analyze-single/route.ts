@@ -122,10 +122,15 @@ const analysisSchema = {
 };
 
 const saveAnalysisToDatabase = async (caseName: string, analysis: CaseAnalysis) => {
+  // Generate UUID for the analysis
+  const analysisId = crypto.randomUUID();
+  const now = new Date().toISOString();
+
   // Insert main analysis record
   const { data: savedAnalysis, error: analysisError } = await supabase
     .from('Analysis')
     .insert({
+      id: analysisId,
       caseName,
       personName: analysis.personName,
       crimeConvicted: analysis.crimeConvicted,
@@ -133,37 +138,71 @@ const saveAnalysisToDatabase = async (caseName: string, analysis: CaseAnalysis) 
       paroleBoardFocus: analysis.paroleBoardFocus,
       summary: analysis.summary,
       riskScore: analysis.riskScore,
+      createdAt: now,
+      updatedAt: now,
     })
     .select()
     .single();
 
   if (analysisError || !savedAnalysis) {
-    throw new Error('Failed to save analysis');
+    console.error('Supabase error:', analysisError);
+    throw new Error(`Failed to save analysis: ${analysisError?.message || 'Unknown error'}`);
   }
 
-  const analysisId = savedAnalysis.id;
+  // Insert all related records in parallel (only if arrays are not empty)
+  const insertPromises = [];
 
-  // Insert all related records in parallel
-  await Promise.all([
-    supabase.from('KeyQuote').insert(
-      analysis.keyQuotes.map(q => ({ analysisId, quote: q.quote, lineNumber: q.lineNumber, context: q.context }))
-    ),
-    supabase.from('TimelineEvent').insert(
-      analysis.timelineEvents.map(e => ({ analysisId, date: e.date, event: e.event, confidence: e.confidence }))
-    ),
-    supabase.from('Inconsistency').insert(
-      analysis.inconsistencies.map(i => ({ analysisId, statement1: i.statement1, source1: i.source1, statement2: i.statement2, source2: i.source2, analysis: i.analysis }))
-    ),
-    supabase.from('EvidenceItem').insert(
-      analysis.evidenceMatrix.map(e => ({ analysisId, evidence: e.evidence, type: e.type, reliability: e.reliability, notes: e.notes }))
-    ),
-    supabase.from('PrecedentCase').insert(
-      analysis.precedentCases.map(p => ({ analysisId, caseName: p.caseName, summary: p.summary, outcome: p.outcome }))
-    ),
-    supabase.from('CriticalAlert').insert(
-      analysis.criticalAlerts.map(a => ({ analysisId, title: a.title, description: a.description, severity: a.severity }))
-    ),
-  ]);
+  if (analysis.keyQuotes.length > 0) {
+    insertPromises.push(
+      supabase.from('KeyQuote').insert(
+        analysis.keyQuotes.map(q => ({ id: crypto.randomUUID(), analysisId, quote: q.quote, lineNumber: q.lineNumber, context: q.context }))
+      )
+    );
+  }
+
+  if (analysis.timelineEvents.length > 0) {
+    insertPromises.push(
+      supabase.from('TimelineEvent').insert(
+        analysis.timelineEvents.map(e => ({ id: crypto.randomUUID(), analysisId, date: e.date, event: e.event, confidence: e.confidence }))
+      )
+    );
+  }
+
+  if (analysis.inconsistencies.length > 0) {
+    insertPromises.push(
+      supabase.from('Inconsistency').insert(
+        analysis.inconsistencies.map(i => ({ id: crypto.randomUUID(), analysisId, statement1: i.statement1, source1: i.source1, statement2: i.statement2, source2: i.source2, analysis: i.analysis }))
+      )
+    );
+  }
+
+  if (analysis.evidenceMatrix.length > 0) {
+    insertPromises.push(
+      supabase.from('EvidenceItem').insert(
+        analysis.evidenceMatrix.map(e => ({ id: crypto.randomUUID(), analysisId, evidence: e.evidence, type: e.type, reliability: e.reliability, notes: e.notes }))
+      )
+    );
+  }
+
+  if (analysis.precedentCases.length > 0) {
+    insertPromises.push(
+      supabase.from('PrecedentCase').insert(
+        analysis.precedentCases.map(p => ({ id: crypto.randomUUID(), analysisId, caseName: p.caseName, summary: p.summary, outcome: p.outcome }))
+      )
+    );
+  }
+
+  if (analysis.criticalAlerts.length > 0) {
+    insertPromises.push(
+      supabase.from('CriticalAlert').insert(
+        analysis.criticalAlerts.map(a => ({ id: crypto.randomUUID(), analysisId, title: a.title, description: a.description, severity: a.severity }))
+      )
+    );
+  }
+
+  if (insertPromises.length > 0) {
+    await Promise.all(insertPromises);
+  }
 
   return savedAnalysis;
 };
