@@ -11,24 +11,35 @@ const AnalyzePage: React.FC = () => {
   const router = useRouter();
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
+  const [loadingMessage, setLoadingMessage] = useState<string>("Analyzing Case Documents...");
+  const [loadingSubMessage, setLoadingSubMessage] = useState<string>("This may take a moment.");
 
-  const handleAnalyze = useCallback(async (documents: string) => {
-    // Prompt for case name
-    const caseName = prompt('Enter a name for this case:');
-    if (!caseName || !caseName.trim()) {
-      alert('Case name is required');
-      return;
-    }
-
+  const handleAnalyze = useCallback(async (documents: string, pdfFiles?: File[], audioFiles?: File[]) => {
     setIsLoading(true);
     setError(null);
+    setLoadingMessage("Analyzing Case Documents...");
+    setLoadingSubMessage("Detecting cases and analyzing content...");
+
     try {
+      // Create FormData to handle text, PDF files, and audio files
+      const formData = new FormData();
+      formData.append('documents', documents);
+
+      if (pdfFiles && pdfFiles.length > 0) {
+        pdfFiles.forEach((file) => {
+          formData.append('pdfFiles', file);
+        });
+      }
+
+      if (audioFiles && audioFiles.length > 0) {
+        audioFiles.forEach((file) => {
+          formData.append('audioFiles', file);
+        });
+      }
+
       const response = await fetch('/api/analyze', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ documents }),
+        body: formData, // Send FormData instead of JSON
       });
 
       if (!response.ok) {
@@ -36,11 +47,32 @@ const AnalyzePage: React.FC = () => {
         throw new Error(errorData.error || 'Failed to fetch analysis from server.');
       }
 
-      const result: CaseAnalysis = await response.json();
+      const result = await response.json();
 
-      // Save analysis and redirect to full view
-      const id = saveAnalysis(caseName.trim(), result);
-      router.push(`/analysis/${id}`);
+      // Check if this is a bulk analysis (multiple people detected)
+      if (result.bulk && result.results) {
+        // Multiple people detected - save all analyses
+        console.log(`Bulk analysis detected: ${result.results.length} cases`);
+        setLoadingMessage(`Processing ${result.results.length} cases...`);
+        setLoadingSubMessage("Saving all analyses...");
+
+        for (const caseResult of result.results) {
+          saveAnalysis(caseResult.caseName, caseResult.analysis);
+        }
+
+        // Show success message and redirect
+        alert(`Successfully analyzed ${result.results.length} cases! Redirecting to overview...`);
+        router.push('/');
+      } else if (result.analysis) {
+        // Single person - use person's name from analysis
+        const caseName = result.analysis.personName || 'Unknown Case';
+
+        // Save analysis and redirect to full view
+        const id = saveAnalysis(caseName, result.analysis);
+        router.push(`/analysis/${id}`);
+      } else {
+        throw new Error('Invalid response format from server.');
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'An unknown error occurred.');
     } finally {
@@ -54,7 +86,7 @@ const AnalyzePage: React.FC = () => {
 
   const renderContent = () => {
     if (isLoading) {
-      return <Loader />;
+      return <Loader message={loadingMessage} subMessage={loadingSubMessage} />;
     }
 
     if (error) {

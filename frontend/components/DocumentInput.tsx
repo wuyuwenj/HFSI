@@ -1,199 +1,213 @@
 'use client';
 
-import React, { useState, useRef, useEffect } from 'react';
-
-// Declare global types for PDF.js loaded from CDN
-declare global {
-  interface Window {
-    pdfjsLib: any;
-  }
-}
+import React, { useState, useRef } from 'react';
 
 interface DocumentInputProps {
-  onAnalyze: (documents: string) => void;
+  onAnalyze: (documents: string, pdfFiles?: File[], audioFiles?: File[]) => void;
 }
 
 const DocumentInput: React.FC<DocumentInputProps> = ({ onAnalyze }) => {
   const [documents, setDocuments] = useState('');
-  const [isProcessing, setIsProcessing] = useState(false);
-  const [processingStatus, setProcessingStatus] = useState('');
-  const [pdfLibLoaded, setPdfLibLoaded] = useState(false);
+  const [uploadedPdfs, setUploadedPdfs] = useState<File[]>([]);
+  const [uploadedAudios, setUploadedAudios] = useState<File[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
-
-  useEffect(() => {
-    // Load PDF.js from CDN using script tag
-    const script = document.createElement('script');
-    script.src = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@4.0.379/build/pdf.min.mjs';
-    script.type = 'module';
-
-    script.onload = () => {
-      // PDF.js is loaded as a module, we need to get it from the global scope
-      // Wait a bit for the module to initialize
-      setTimeout(() => {
-        if (typeof window !== 'undefined' && (window as any).pdfjsLib) {
-          (window as any).pdfjsLib.GlobalWorkerOptions.workerSrc =
-            'https://cdn.jsdelivr.net/npm/pdfjs-dist@4.0.379/build/pdf.worker.min.mjs';
-          setPdfLibLoaded(true);
-        } else {
-          // Try to initialize manually
-          const initScript = document.createElement('script');
-          initScript.type = 'module';
-          initScript.textContent = `
-            import * as pdfjsLib from 'https://cdn.jsdelivr.net/npm/pdfjs-dist@4.0.379/build/pdf.min.mjs';
-            window.pdfjsLib = pdfjsLib;
-            pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@4.0.379/build/pdf.worker.min.mjs';
-            window.dispatchEvent(new Event('pdfjs-loaded'));
-          `;
-          document.head.appendChild(initScript);
-        }
-      }, 100);
-    };
-
-    const handlePdfJsLoaded = () => {
-      setPdfLibLoaded(true);
-    };
-
-    window.addEventListener('pdfjs-loaded', handlePdfJsLoaded);
-    document.head.appendChild(script);
-
-    return () => {
-      window.removeEventListener('pdfjs-loaded', handlePdfJsLoaded);
-    };
-  }, []);
+  const audioInputRef = useRef<HTMLInputElement>(null);
 
   const handleAnalyzeClick = () => {
-    if (documents.trim()) {
-      onAnalyze(documents);
+    if (documents.trim() || uploadedPdfs.length > 0 || uploadedAudios.length > 0) {
+      onAnalyze(documents, uploadedPdfs, uploadedAudios);
     }
   };
 
-  const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (!file) return;
+  const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const files = event.target.files;
+    if (!files || files.length === 0) return;
 
-    if (file.type !== 'application/pdf') {
-      alert('Please upload a PDF file');
-      return;
-    }
+    const acceptedTypes = [
+      'application/pdf',
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document', // .docx
+      'text/plain', // .txt
+    ];
 
-    if (!pdfLibLoaded || !window.pdfjsLib) {
-      alert('PDF library is still loading. Please wait a moment and try again.');
-      return;
-    }
-
-    setIsProcessing(true);
-    setProcessingStatus('Loading PDF...');
-
-    try {
-      const { createWorker } = await import('tesseract.js');
-
-      // Load PDF
-      const arrayBuffer = await file.arrayBuffer();
-      const pdf = await window.pdfjsLib.getDocument({ data: arrayBuffer }).promise;
-
-      setProcessingStatus('Initializing OCR...');
-      const worker = await createWorker('eng');
-
-      let fullText = '';
-
-      // Process each page
-      for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
-        setProcessingStatus(`Processing page ${pageNum} of ${pdf.numPages}...`);
-
-        const page = await pdf.getPage(pageNum);
-        const viewport = page.getViewport({ scale: 2.0 });
-
-        // Create canvas to render PDF page
-        const canvas = document.createElement('canvas');
-        const context = canvas.getContext('2d')!;
-        canvas.height = viewport.height;
-        canvas.width = viewport.width;
-
-        // Render PDF page to canvas
-        await page.render({
-          canvasContext: context,
-          viewport: viewport,
-        }).promise;
-
-        // Convert canvas to image and run OCR
-        const imageData = canvas.toDataURL('image/png');
-        const { data: { text } } = await worker.recognize(imageData);
-
-        fullText += `\n--- Page ${pageNum} ---\n${text}\n`;
-      }
-
-      await worker.terminate();
-
-      // Append or set the extracted text to the textarea
-      setDocuments(prevDocs => {
-        if (prevDocs.trim()) {
-          return prevDocs + '\n\n--- PDF Document: ' + file.name + ' ---' + fullText;
-        }
-        return '--- PDF Document: ' + file.name + ' ---' + fullText;
-      });
-
-      setProcessingStatus('');
-    } catch (error) {
-      console.error('Error processing PDF:', error);
-      alert('Failed to process PDF. Please try again.');
-      setProcessingStatus('');
-    } finally {
-      setIsProcessing(false);
-      // Reset file input
-      if (fileInputRef.current) {
-        fileInputRef.current.value = '';
+    const newFiles: File[] = [];
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i];
+      if (acceptedTypes.includes(file.type)) {
+        newFiles.push(file);
+      } else {
+        alert(`${file.name} is not a supported file type and will be skipped. Supported: PDF, DOCX, TXT`);
       }
     }
+
+    if (newFiles.length > 0) {
+      setUploadedPdfs(prev => [...prev, ...newFiles]);
+    }
+
+    // Reset file input
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
+  };
+
+  const handleRemovePdf = (index: number) => {
+    setUploadedPdfs(prev => prev.filter((_, i) => i !== index));
   };
 
   const handleUploadButtonClick = () => {
     fileInputRef.current?.click();
   };
 
+  const handleAudioUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const files = event.target.files;
+    if (!files || files.length === 0) return;
+
+    const acceptedAudioTypes = [
+      'audio/mpeg', // .mp3
+      'audio/wav', // .wav
+      'audio/mp4', // .m4a
+      'audio/x-m4a', // .m4a
+      'audio/webm', // .webm
+      'audio/ogg', // .ogg
+    ];
+
+    const newFiles: File[] = [];
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i];
+      if (acceptedAudioTypes.includes(file.type)) {
+        newFiles.push(file);
+      } else {
+        alert(`${file.name} is not a supported audio file type. Supported: MP3, WAV, M4A, WEBM, OGG`);
+      }
+    }
+
+    if (newFiles.length > 0) {
+      setUploadedAudios(prev => [...prev, ...newFiles]);
+    }
+
+    // Reset file input
+    if (audioInputRef.current) {
+      audioInputRef.current.value = '';
+    }
+  };
+
+  const handleRemoveAudio = (index: number) => {
+    setUploadedAudios(prev => prev.filter((_, i) => i !== index));
+  };
+
+  const handleAudioButtonClick = () => {
+    audioInputRef.current?.click();
+  };
+
 
   return (
     <div className="min-h-screen flex flex-col items-center justify-center bg-brand-dark p-4 sm:p-6 lg:p-8">
       <div className="w-full max-w-4xl bg-slate-800 rounded-lg shadow-2xl p-6 md:p-10 space-y-6">
+        <div className="flex items-center justify-between mb-4">
+          <a
+            href="/"
+            className="text-blue-400 hover:text-blue-300 flex items-center gap-2 transition duration-150"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+              <path fillRule="evenodd" d="M9.707 16.707a1 1 0 01-1.414 0l-6-6a1 1 0 010-1.414l6-6a1 1 0 011.414 1.414L5.414 9H17a1 1 0 110 2H5.414l4.293 4.293a1 1 0 010 1.414z" clipRule="evenodd" />
+            </svg>
+            Back to Overview
+          </a>
+        </div>
         <div className="text-center">
           <h1 className="text-4xl font-bold text-white">VeriJudex</h1>
           <p className="text-lg text-blue-300 mt-2">AI-Powered Judicial Decision Support</p>
         </div>
         <p className="text-gray-300 text-center">
-          Paste all relevant case documents below or upload a PDF file. VeriJudex will analyze the unstructured text to highlight inconsistencies, build timelines, and provide a comprehensive decision-making dashboard.
+          Paste case documents below, upload files (PDF, DOCX, TXT), or upload audio recordings (MP3, WAV, M4A, WEBM, OGG). VeriJudex will analyze the content to highlight inconsistencies, build timelines, and provide a comprehensive decision-making dashboard.
         </p>
-        {processingStatus && (
-          <div className="text-center text-blue-300 bg-slate-700 py-2 px-4 rounded-md">
-            {processingStatus}
+
+        {/* Uploaded Files List */}
+        {uploadedPdfs.length > 0 && (
+          <div className="bg-slate-700 p-4 rounded-md">
+            <h3 className="text-white font-semibold mb-2">Uploaded Documents ({uploadedPdfs.length})</h3>
+            <div className="space-y-2">
+              {uploadedPdfs.map((pdf, index) => (
+                <div key={index} className="flex items-center justify-between bg-slate-800 p-2 rounded">
+                  <span className="text-gray-300 text-sm">{pdf.name}</span>
+                  <button
+                    onClick={() => handleRemovePdf(index)}
+                    className="text-red-400 hover:text-red-300 text-sm"
+                  >
+                    Remove
+                  </button>
+                </div>
+              ))}
+            </div>
           </div>
         )}
+
+        {/* Uploaded Audio Files List */}
+        {uploadedAudios.length > 0 && (
+          <div className="bg-slate-700 p-4 rounded-md">
+            <h3 className="text-white font-semibold mb-2">Uploaded Audio Files ({uploadedAudios.length})</h3>
+            <div className="space-y-2">
+              {uploadedAudios.map((audio, index) => (
+                <div key={index} className="flex items-center justify-between bg-slate-800 p-2 rounded">
+                  <span className="text-gray-300 text-sm">{audio.name}</span>
+                  <button
+                    onClick={() => handleRemoveAudio(index)}
+                    className="text-red-400 hover:text-red-300 text-sm"
+                  >
+                    Remove
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
         <textarea
-          className="w-full h-80 p-4 bg-slate-900 border border-slate-700 rounded-md text-gray-200 focus:ring-2 focus:ring-brand-secondary focus:border-brand-secondary transition duration-200 resize-none"
-          placeholder="Paste witness statements, police reports, forensic analyses, etc. here..."
+          className="w-full h-64 p-4 bg-slate-900 border border-slate-700 rounded-md text-gray-200 focus:ring-2 focus:ring-brand-secondary focus:border-brand-secondary transition duration-200 resize-none"
+          placeholder="Paste witness statements, police reports, forensic analyses, etc. here... (optional if files or audio uploaded)"
           value={documents}
           onChange={(e) => setDocuments(e.target.value)}
         />
-        <div className="flex flex-col sm:flex-row gap-4">
+        <div className="flex flex-col gap-4">
           <input
             type="file"
             ref={fileInputRef}
-            accept=".pdf"
+            accept=".pdf,.docx,.txt"
+            multiple
             onChange={handleFileUpload}
             className="hidden"
           />
-          <button
-            onClick={handleUploadButtonClick}
-            disabled={isProcessing}
-            className="flex-1 py-3 px-6 bg-green-600 text-white font-bold rounded-md hover:bg-green-500 disabled:bg-slate-600 disabled:cursor-not-allowed transition duration-200 flex items-center justify-center gap-2"
-          >
-            <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
-              <path fillRule="evenodd" d="M3 17a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zM6.293 6.707a1 1 0 010-1.414l3-3a1 1 0 011.414 0l3 3a1 1 0 01-1.414 1.414L11 5.414V13a1 1 0 11-2 0V5.414L7.707 6.707a1 1 0 01-1.414 0z" clipRule="evenodd" />
-            </svg>
-            {isProcessing ? 'Processing...' : 'Upload PDF'}
-          </button>
+          <input
+            type="file"
+            ref={audioInputRef}
+            accept="audio/mpeg,audio/wav,audio/mp4,audio/x-m4a,audio/webm,audio/ogg,.mp3,.wav,.m4a,.webm,.ogg"
+            multiple
+            onChange={handleAudioUpload}
+            className="hidden"
+          />
+          <div className="flex flex-col sm:flex-row gap-4">
+            <button
+              onClick={handleUploadButtonClick}
+              className="flex-1 py-3 px-6 bg-green-600 text-white font-bold rounded-md hover:bg-green-500 transition duration-200 flex items-center justify-center gap-2"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                <path fillRule="evenodd" d="M3 17a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zM6.293 6.707a1 1 0 010-1.414l3-3a1 1 0 011.414 0l3 3a1 1 0 01-1.414 1.414L11 5.414V13a1 1 0 11-2 0V5.414L7.707 6.707a1 1 0 01-1.414 0z" clipRule="evenodd" />
+              </svg>
+              Upload Documents
+            </button>
+            <button
+              onClick={handleAudioButtonClick}
+              className="flex-1 py-3 px-6 bg-purple-600 text-white font-bold rounded-md hover:bg-purple-500 transition duration-200 flex items-center justify-center gap-2"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                <path fillRule="evenodd" d="M7 4a3 3 0 016 0v4a3 3 0 11-6 0V4zm4 10.93A7.001 7.001 0 0017 8a1 1 0 10-2 0A5 5 0 015 8a1 1 0 00-2 0 7.001 7.001 0 006 6.93V17H6a1 1 0 100 2h8a1 1 0 100-2h-3v-2.07z" clipRule="evenodd" />
+              </svg>
+              Upload Audio
+            </button>
+          </div>
           <button
             onClick={handleAnalyzeClick}
-            disabled={!documents.trim()}
-            className="flex-1 py-3 px-6 bg-brand-secondary text-white font-bold rounded-md hover:bg-blue-500 disabled:bg-slate-600 disabled:cursor-not-allowed transition duration-200 flex items-center justify-center gap-2"
+            disabled={!documents.trim() && uploadedPdfs.length === 0 && uploadedAudios.length === 0}
+            className="w-full py-3 px-6 bg-brand-secondary text-white font-bold rounded-md hover:bg-blue-500 disabled:bg-slate-600 disabled:cursor-not-allowed transition duration-200 flex items-center justify-center gap-2"
           >
             <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
               <path fillRule="evenodd" d="M4 2a2 2 0 00-2 2v12a2 2 0 002 2h12a2 2 0 002-2V4a2 2 0 00-2-2H4zm3 2a1 1 0 011-1h6a1 1 0 110 2H8a1 1 0 01-1-1zm-1 5a1 1 0 000 2h10a1 1 0 100-2H6zm0 4a1 1 0 100 2h10a1 1 0 100-2H6z" clipRule="evenodd" />

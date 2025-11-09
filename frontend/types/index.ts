@@ -35,8 +35,19 @@ export interface CriticalAlert {
   severity: AlertSeverity;
 }
 
+export interface KeyQuote {
+  quote: string;
+  lineNumber: string;
+  context: string;
+}
+
 export interface CaseAnalysis {
   summary: string;
+  personName: string;
+  crimeConvicted: string;
+  innocenceClaim: string;
+  paroleBoardFocus: string;
+  keyQuotes: KeyQuote[];
   timelineEvents: TimelineEvent[];
   inconsistencies: Inconsistency[];
   evidenceMatrix: EvidenceItem[];

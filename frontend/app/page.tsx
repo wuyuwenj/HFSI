@@ -4,9 +4,14 @@ import React, { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { getAllAnalyses, deleteAnalysis, type AnalysisRecord } from '@/lib/analysisStorage';
 
+type SortColumn = 'caseName' | 'date' | 'score' | 'assessment';
+type SortDirection = 'asc' | 'desc';
+
 const OverviewDashboard: React.FC = () => {
   const router = useRouter();
   const [analyses, setAnalyses] = useState<AnalysisRecord[]>([]);
+  const [sortColumn, setSortColumn] = useState<SortColumn>('date');
+  const [sortDirection, setSortDirection] = useState<SortDirection>('desc');
 
   useEffect(() => {
     loadAnalyses();
@@ -15,6 +20,48 @@ const OverviewDashboard: React.FC = () => {
   const loadAnalyses = () => {
     const data = getAllAnalyses();
     setAnalyses(data);
+  };
+
+  const handleSort = (column: SortColumn) => {
+    if (sortColumn === column) {
+      // Toggle direction if same column
+      setSortDirection(sortDirection === 'asc' ? 'desc' : 'asc');
+    } else {
+      // New column, default to ascending
+      setSortColumn(column);
+      setSortDirection('asc');
+    }
+  };
+
+  const getSortedAnalyses = () => {
+    const sorted = [...analyses].sort((a, b) => {
+      let aValue: string | number;
+      let bValue: string | number;
+
+      switch (sortColumn) {
+        case 'caseName':
+          aValue = a.caseName.toLowerCase();
+          bValue = b.caseName.toLowerCase();
+          break;
+        case 'date':
+          aValue = new Date(a.createdAt).getTime();
+          bValue = new Date(b.createdAt).getTime();
+          break;
+        case 'score':
+        case 'assessment':
+          aValue = a.riskScore;
+          bValue = b.riskScore;
+          break;
+        default:
+          return 0;
+      }
+
+      if (aValue < bValue) return sortDirection === 'asc' ? -1 : 1;
+      if (aValue > bValue) return sortDirection === 'asc' ? 1 : -1;
+      return 0;
+    });
+
+    return sorted;
   };
 
   const handleRowClick = (id: string) => {
@@ -29,16 +76,46 @@ const OverviewDashboard: React.FC = () => {
     }
   };
 
-  const getRiskColor = (score: number) => {
-    if (score >= 70) return 'text-red-500';
-    if (score >= 40) return 'text-yellow-500';
-    return 'text-green-500';
+  const getInnocenceColor = (score: number) => {
+    if (score >= 70) return 'text-green-400';
+    if (score >= 40) return 'text-yellow-400';
+    return 'text-red-400';
   };
 
-  const getRiskLevel = (score: number) => {
-    if (score >= 70) return 'High Risk';
-    if (score >= 40) return 'Medium Risk';
-    return 'Low Risk';
+  const getInnocenceLevel = (score: number) => {
+    if (score >= 70) return 'Likely Innocent';
+    if (score >= 40) return 'Uncertain';
+    return 'Likely Guilty';
+  };
+
+  const SortableHeader: React.FC<{ column: SortColumn; children: React.ReactNode }> = ({ column, children }) => {
+    const isActive = sortColumn === column;
+    return (
+      <th
+        className="px-6 py-4 text-left text-xs font-medium text-gray-300 uppercase tracking-wider cursor-pointer hover:bg-slate-600 transition duration-150"
+        onClick={() => handleSort(column)}
+      >
+        <div className="flex items-center gap-2">
+          {children}
+          <div className="flex flex-col">
+            <svg
+              className={`h-3 w-3 ${isActive && sortDirection === 'asc' ? 'text-blue-400' : 'text-gray-500'}`}
+              fill="currentColor"
+              viewBox="0 0 20 20"
+            >
+              <path d="M5.293 9.707a1 1 0 010-1.414l4-4a1 1 0 011.414 0l4 4a1 1 0 01-1.414 1.414L10 6.414l-3.293 3.293a1 1 0 01-1.414 0z" />
+            </svg>
+            <svg
+              className={`h-3 w-3 -mt-1 ${isActive && sortDirection === 'desc' ? 'text-blue-400' : 'text-gray-500'}`}
+              fill="currentColor"
+              viewBox="0 0 20 20"
+            >
+              <path d="M14.707 10.293a1 1 0 010 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 111.414-1.414L10 13.586l3.293-3.293a1 1 0 011.414 0z" />
+            </svg>
+          </div>
+        </div>
+      </th>
+    );
   };
 
   return (
@@ -81,25 +158,17 @@ const OverviewDashboard: React.FC = () => {
             <table className="w-full">
               <thead className="bg-slate-700">
                 <tr>
-                  <th className="px-6 py-4 text-left text-xs font-medium text-gray-300 uppercase tracking-wider">
-                    Case Name
-                  </th>
-                  <th className="px-6 py-4 text-left text-xs font-medium text-gray-300 uppercase tracking-wider">
-                    Date
-                  </th>
-                  <th className="px-6 py-4 text-left text-xs font-medium text-gray-300 uppercase tracking-wider">
-                    Risk Score
-                  </th>
-                  <th className="px-6 py-4 text-left text-xs font-medium text-gray-300 uppercase tracking-wider">
-                    Risk Level
-                  </th>
+                  <SortableHeader column="caseName">Case Name</SortableHeader>
+                  <SortableHeader column="date">Date</SortableHeader>
+                  <SortableHeader column="score">Innocence Score</SortableHeader>
+                  <SortableHeader column="assessment">Assessment</SortableHeader>
                   <th className="px-6 py-4 text-right text-xs font-medium text-gray-300 uppercase tracking-wider">
                     Actions
                   </th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-700">
-                {analyses.map((record) => (
+                {getSortedAnalyses().map((record) => (
                   <tr
                     key={record.id}
                     onClick={() => handleRowClick(record.id)}
@@ -111,11 +180,11 @@ const OverviewDashboard: React.FC = () => {
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-300">
                       {new Date(record.createdAt).toLocaleDateString()} {new Date(record.createdAt).toLocaleTimeString()}
                     </td>
-                    <td className={`px-6 py-4 whitespace-nowrap text-sm font-bold ${getRiskColor(record.riskScore)}`}>
+                    <td className={`px-6 py-4 whitespace-nowrap text-sm font-bold ${getInnocenceColor(record.riskScore)}`}>
                       {record.riskScore}/100
                     </td>
-                    <td className={`px-6 py-4 whitespace-nowrap text-sm font-medium ${getRiskColor(record.riskScore)}`}>
-                      {getRiskLevel(record.riskScore)}
+                    <td className={`px-6 py-4 whitespace-nowrap text-sm font-medium ${getInnocenceColor(record.riskScore)}`}>
+                      {getInnocenceLevel(record.riskScore)}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
                       <button
