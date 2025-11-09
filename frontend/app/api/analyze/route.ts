@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { GoogleGenAI, Type } from "@google/genai";
 import type { CaseAnalysis } from "@/types";
+import { supabase } from "@/lib/supabase";
 
 // Initialize AI client with API key from environment variable
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY! });
@@ -403,6 +404,59 @@ const analyzeCaseDocuments = async (
   }
 };
 
+// Save analysis to database
+const saveAnalysisToDatabase = async (caseName: string, analysis: CaseAnalysis) => {
+  try {
+    // Insert main analysis record
+    const { data: savedAnalysis, error: analysisError } = await supabase
+      .from('Analysis')
+      .insert({
+        caseName,
+        personName: analysis.personName,
+        crimeConvicted: analysis.crimeConvicted,
+        innocenceClaim: analysis.innocenceClaim,
+        paroleBoardFocus: analysis.paroleBoardFocus,
+        summary: analysis.summary,
+        riskScore: analysis.riskScore,
+      })
+      .select()
+      .single();
+
+    if (analysisError || !savedAnalysis) {
+      throw new Error('Failed to save analysis');
+    }
+
+    const analysisId = savedAnalysis.id;
+
+    // Insert all related records in parallel
+    await Promise.all([
+      supabase.from('KeyQuote').insert(
+        analysis.keyQuotes.map(q => ({ analysisId, quote: q.quote, lineNumber: q.lineNumber, context: q.context }))
+      ),
+      supabase.from('TimelineEvent').insert(
+        analysis.timelineEvents.map(e => ({ analysisId, date: e.date, event: e.event, confidence: e.confidence }))
+      ),
+      supabase.from('Inconsistency').insert(
+        analysis.inconsistencies.map(i => ({ analysisId, statement1: i.statement1, source1: i.source1, statement2: i.statement2, source2: i.source2, analysis: i.analysis }))
+      ),
+      supabase.from('EvidenceItem').insert(
+        analysis.evidenceMatrix.map(e => ({ analysisId, evidence: e.evidence, type: e.type, reliability: e.reliability, notes: e.notes }))
+      ),
+      supabase.from('PrecedentCase').insert(
+        analysis.precedentCases.map(p => ({ analysisId, caseName: p.caseName, summary: p.summary, outcome: p.outcome }))
+      ),
+      supabase.from('CriticalAlert').insert(
+        analysis.criticalAlerts.map(a => ({ analysisId, title: a.title, description: a.description, severity: a.severity }))
+      ),
+    ]);
+
+    return savedAnalysis;
+  } catch (error) {
+    console.error("Error saving analysis to database:", error);
+    throw new Error("Failed to save analysis to database");
+  }
+};
+
 export async function POST(request: Request) {
   try {
     const formData = await request.formData();
@@ -425,7 +479,7 @@ export async function POST(request: Request) {
       // Multiple people detected - analyze each separately
       console.log(`Detected ${detection.people.length} different people, analyzing separately...`);
 
-      const bulkResults: Array<{ caseName: string; analysis: CaseAnalysis }> = [];
+      const savedAnalyses = [];
 
       for (const person of detection.people) {
         console.log(`Analyzing case for: ${person.name}`);
@@ -436,23 +490,36 @@ export async function POST(request: Request) {
         // Analyze this person's documents
         const analysis = await analyzeCaseDocuments("", personFiles, []);
 
-        bulkResults.push({
-          caseName: person.name,
-          analysis: analysis,
-        });
+        // Save to database
+        const savedAnalysis = await saveAnalysisToDatabase(person.name, analysis);
+        savedAnalyses.push(savedAnalysis);
       }
 
-      // Return bulk results
+      // Return bulk results with database IDs
       return NextResponse.json({
         bulk: true,
-        results: bulkResults,
+        count: savedAnalyses.length,
+        analyses: savedAnalyses.map(a => ({
+          id: a.id,
+          caseName: a.caseName,
+          riskScore: a.riskScore,
+        })),
       });
     } else {
       // Single person - analyze normally
       const analysisResult = await analyzeCaseDocuments(documents, pdfFiles, audioFiles);
+
+      // Save to database
+      const savedAnalysis = await saveAnalysisToDatabase(
+        analysisResult.personName || 'Unknown Case',
+        analysisResult
+      );
+
       return NextResponse.json({
         bulk: false,
-        analysis: analysisResult,
+        id: savedAnalysis.id,
+        caseName: savedAnalysis.caseName,
+        riskScore: savedAnalysis.riskScore,
       });
     }
   } catch (error) {

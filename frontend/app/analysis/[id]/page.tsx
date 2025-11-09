@@ -3,26 +3,64 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import Dashboard from '@/components/Dashboard';
-import { getAnalysisById, type AnalysisRecord } from '@/lib/analysisStorage';
+import type { CaseAnalysis } from '@/types';
+
+interface AnalysisWithDetails {
+  id: string;
+  caseName: string;
+  createdAt: string;
+  analysis: CaseAnalysis;
+}
 
 const AnalysisDetailPage: React.FC = () => {
   const params = useParams();
   const router = useRouter();
-  const [record, setRecord] = useState<AnalysisRecord | null>(null);
+  const [analysis, setAnalysis] = useState<CaseAnalysis | null>(null);
+  const [caseName, setCaseName] = useState<string>('');
+  const [createdAt, setCreatedAt] = useState<string>('');
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const id = params.id as string;
-    const data = getAnalysisById(id);
+    const loadAnalysis = async () => {
+      try {
+        const id = params.id as string;
+        const response = await fetch(`/api/analyses/${id}`);
 
-    if (!data) {
-      // Analysis not found, redirect to home
-      router.push('/');
-      return;
-    }
+        if (!response.ok) {
+          // Analysis not found, redirect to home
+          router.push('/');
+          return;
+        }
 
-    setRecord(data);
-    setLoading(false);
+        const data = await response.json();
+
+        // Transform database format to CaseAnalysis format
+        const analysisData: CaseAnalysis = {
+          summary: data.summary,
+          personName: data.personName,
+          crimeConvicted: data.crimeConvicted,
+          innocenceClaim: data.innocenceClaim,
+          paroleBoardFocus: data.paroleBoardFocus,
+          keyQuotes: data.keyQuotes,
+          timelineEvents: data.timelineEvents,
+          inconsistencies: data.inconsistencies,
+          evidenceMatrix: data.evidenceItems,
+          riskScore: data.riskScore,
+          precedentCases: data.precedentCases,
+          criticalAlerts: data.criticalAlerts,
+        };
+
+        setAnalysis(analysisData);
+        setCaseName(data.caseName);
+        setCreatedAt(data.createdAt);
+        setLoading(false);
+      } catch (error) {
+        console.error('Error loading analysis:', error);
+        router.push('/');
+      }
+    };
+
+    loadAnalysis();
   }, [params.id, router]);
 
   const handleBackToOverview = () => {
@@ -37,7 +75,7 @@ const AnalysisDetailPage: React.FC = () => {
     );
   }
 
-  if (!record) {
+  if (!analysis) {
     return null; // Will redirect
   }
 
@@ -56,16 +94,16 @@ const AnalysisDetailPage: React.FC = () => {
               </svg>
               Back to Overview
             </button>
-            <h1 className="text-3xl font-bold text-white">{record.caseName}</h1>
+            <h1 className="text-3xl font-bold text-white">{caseName}</h1>
             <p className="text-gray-400 text-sm mt-1">
-              Created: {new Date(record.createdAt).toLocaleDateString()} at {new Date(record.createdAt).toLocaleTimeString()}
+              Created: {new Date(createdAt).toLocaleDateString()} at {new Date(createdAt).toLocaleTimeString()}
             </p>
           </div>
         </div>
       </div>
 
       {/* Dashboard */}
-      <Dashboard analysis={record.analysis} onReset={handleBackToOverview} />
+      <Dashboard analysis={analysis} onReset={handleBackToOverview} />
     </div>
   );
 };
