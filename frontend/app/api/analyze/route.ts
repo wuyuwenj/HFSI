@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { GoogleGenAI, Type } from "@google/genai";
 import type { CaseAnalysis } from "@/types";
+import { prisma } from "@/lib/prisma";
 
 // Initialize AI client with API key from environment variable
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY! });
@@ -403,6 +404,81 @@ const analyzeCaseDocuments = async (
   }
 };
 
+// Save analysis to database
+const saveAnalysisToDatabase = async (caseName: string, analysis: CaseAnalysis) => {
+  try {
+    const savedAnalysis = await prisma.analysis.create({
+      data: {
+        caseName,
+        personName: analysis.personName,
+        crimeConvicted: analysis.crimeConvicted,
+        innocenceClaim: analysis.innocenceClaim,
+        paroleBoardFocus: analysis.paroleBoardFocus,
+        summary: analysis.summary,
+        riskScore: analysis.riskScore,
+        keyQuotes: {
+          create: analysis.keyQuotes.map(quote => ({
+            quote: quote.quote,
+            lineNumber: quote.lineNumber,
+            context: quote.context,
+          })),
+        },
+        timelineEvents: {
+          create: analysis.timelineEvents.map(event => ({
+            date: event.date,
+            event: event.event,
+            confidence: event.confidence,
+          })),
+        },
+        inconsistencies: {
+          create: analysis.inconsistencies.map(inc => ({
+            statement1: inc.statement1,
+            source1: inc.source1,
+            statement2: inc.statement2,
+            source2: inc.source2,
+            analysis: inc.analysis,
+          })),
+        },
+        evidenceItems: {
+          create: analysis.evidenceMatrix.map(item => ({
+            evidence: item.evidence,
+            type: item.type,
+            reliability: item.reliability,
+            notes: item.notes,
+          })),
+        },
+        precedentCases: {
+          create: analysis.precedentCases.map(precedent => ({
+            caseName: precedent.caseName,
+            summary: precedent.summary,
+            outcome: precedent.outcome,
+          })),
+        },
+        criticalAlerts: {
+          create: analysis.criticalAlerts.map(alert => ({
+            title: alert.title,
+            description: alert.description,
+            severity: alert.severity,
+          })),
+        },
+      },
+      include: {
+        keyQuotes: true,
+        timelineEvents: true,
+        inconsistencies: true,
+        evidenceItems: true,
+        precedentCases: true,
+        criticalAlerts: true,
+      },
+    });
+
+    return savedAnalysis;
+  } catch (error) {
+    console.error("Error saving analysis to database:", error);
+    throw new Error("Failed to save analysis to database");
+  }
+};
+
 export async function POST(request: Request) {
   try {
     const formData = await request.formData();
@@ -425,7 +501,7 @@ export async function POST(request: Request) {
       // Multiple people detected - analyze each separately
       console.log(`Detected ${detection.people.length} different people, analyzing separately...`);
 
-      const bulkResults: Array<{ caseName: string; analysis: CaseAnalysis }> = [];
+      const savedAnalyses = [];
 
       for (const person of detection.people) {
         console.log(`Analyzing case for: ${person.name}`);
@@ -436,23 +512,36 @@ export async function POST(request: Request) {
         // Analyze this person's documents
         const analysis = await analyzeCaseDocuments("", personFiles, []);
 
-        bulkResults.push({
-          caseName: person.name,
-          analysis: analysis,
-        });
+        // Save to database
+        const savedAnalysis = await saveAnalysisToDatabase(person.name, analysis);
+        savedAnalyses.push(savedAnalysis);
       }
 
-      // Return bulk results
+      // Return bulk results with database IDs
       return NextResponse.json({
         bulk: true,
-        results: bulkResults,
+        count: savedAnalyses.length,
+        analyses: savedAnalyses.map(a => ({
+          id: a.id,
+          caseName: a.caseName,
+          riskScore: a.riskScore,
+        })),
       });
     } else {
       // Single person - analyze normally
       const analysisResult = await analyzeCaseDocuments(documents, pdfFiles, audioFiles);
+
+      // Save to database
+      const savedAnalysis = await saveAnalysisToDatabase(
+        analysisResult.personName || 'Unknown Case',
+        analysisResult
+      );
+
       return NextResponse.json({
         bulk: false,
-        analysis: analysisResult,
+        id: savedAnalysis.id,
+        caseName: savedAnalysis.caseName,
+        riskScore: savedAnalysis.riskScore,
       });
     }
   } catch (error) {

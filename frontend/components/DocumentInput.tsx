@@ -117,9 +117,35 @@ const DocumentInput: React.FC<DocumentInputProps> = ({ onAnalyze }) => {
           <h1 className="text-4xl font-bold text-white">VeriJudex</h1>
           <p className="text-lg text-blue-300 mt-2">AI-Powered Judicial Decision Support</p>
         </div>
-        <p className="text-gray-300 text-center">
-          Paste case documents below, upload files (PDF, DOCX, TXT), or upload audio recordings (MP3, WAV, M4A, WEBM, OGG). VeriJudex will analyze the content to highlight inconsistencies, build timelines, and provide a comprehensive decision-making dashboard.
-        </p>
+
+        {/* Instructions for Upload Modes */}
+        <div className="bg-blue-900/30 border border-blue-500/50 rounded-lg p-4 space-y-3">
+          <h3 className="text-white font-semibold text-lg">Upload Instructions</h3>
+          <div className="space-y-3 text-gray-200 text-sm">
+            <div>
+              <h4 className="font-semibold text-blue-300 mb-1">📋 Single Person Analysis (Detailed)</h4>
+              <p className="text-gray-300">
+                For analyzing <strong>one person's case</strong> in detail, you can upload <strong>any combination</strong> of:
+              </p>
+              <ul className="list-disc list-inside ml-4 mt-1 text-gray-400">
+                <li>Documents (PDF, DOCX, TXT)</li>
+                <li>Audio recordings (MP3, WAV, M4A, WEBM, OGG)</li>
+                <li>Pasted text content</li>
+              </ul>
+            </div>
+            <div>
+              <h4 className="font-semibold text-green-300 mb-1">📁 Bulk Upload (Multiple People)</h4>
+              <p className="text-gray-300">
+                For analyzing <strong>multiple people at once</strong>, we recommend uploading <strong>document files only</strong> (PDF, DOCX, TXT). The system will:
+              </p>
+              <ul className="list-disc list-inside ml-4 mt-1 text-gray-400">
+                <li>Automatically detect different people in your files</li>
+                <li>Separate files by person</li>
+                <li>Analyze each case individually with progress tracking</li>
+              </ul>
+            </div>
+          </div>
+        </div>
 
         {/* Uploaded Files List */}
         {uploadedPdfs.length > 0 && (

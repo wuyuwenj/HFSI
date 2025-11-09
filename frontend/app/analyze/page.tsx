@@ -13,70 +13,144 @@ const AnalyzePage: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [loadingMessage, setLoadingMessage] = useState<string>("Analyzing Case Documents...");
   const [loadingSubMessage, setLoadingSubMessage] = useState<string>("This may take a moment.");
+  const [progress, setProgress] = useState<number>(0);
+  const [totalCases, setTotalCases] = useState<number>(0);
 
   const handleAnalyze = useCallback(async (documents: string, pdfFiles?: File[], audioFiles?: File[]) => {
     setIsLoading(true);
     setError(null);
-    setLoadingMessage("Analyzing Case Documents...");
-    setLoadingSubMessage("Detecting cases and analyzing content...");
+    setProgress(0);
+    setTotalCases(0);
+    setLoadingMessage("Detecting cases...");
+    setLoadingSubMessage("Analyzing uploaded documents...");
 
     try {
-      // Create FormData to handle text, PDF files, and audio files
-      const formData = new FormData();
-      formData.append('documents', documents);
+      // Step 1: Detect if there are multiple people
+      const detectFormData = new FormData();
+      detectFormData.append('documents', documents);
 
       if (pdfFiles && pdfFiles.length > 0) {
         pdfFiles.forEach((file) => {
-          formData.append('pdfFiles', file);
+          detectFormData.append('pdfFiles', file);
         });
       }
 
-      if (audioFiles && audioFiles.length > 0) {
-        audioFiles.forEach((file) => {
-          formData.append('audioFiles', file);
-        });
-      }
-
-      const response = await fetch('/api/analyze', {
+      const detectResponse = await fetch('/api/detect', {
         method: 'POST',
-        body: formData, // Send FormData instead of JSON
+        body: detectFormData,
       });
 
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || 'Failed to fetch analysis from server.');
+      if (!detectResponse.ok) {
+        throw new Error('Failed to detect cases');
       }
 
-      const result = await response.json();
+      const detection = await detectResponse.json();
 
-      // Check if this is a bulk analysis (multiple people detected)
-      if (result.bulk && result.results) {
-        // Multiple people detected - save all analyses
-        console.log(`Bulk analysis detected: ${result.results.length} cases`);
-        setLoadingMessage(`Processing ${result.results.length} cases...`);
-        setLoadingSubMessage("Saving all analyses...");
+      // Step 2: Check if multiple people detected
+      if (detection.multiplePeople && detection.people.length > 1) {
+        // Multiple people detected - analyze each one separately with progress tracking
+        const peopleCount = detection.people.length;
+        setTotalCases(peopleCount);
+        setLoadingMessage(`Analyzing ${peopleCount} cases...`);
+        setLoadingSubMessage("Processing each case individually...");
 
-        for (const caseResult of result.results) {
-          saveAnalysis(caseResult.caseName, caseResult.analysis);
+        const analysisIds: string[] = [];
+
+        for (let i = 0; i < detection.people.length; i++) {
+          const person = detection.people[i];
+          setLoadingSubMessage(`Analyzing case ${i + 1} of ${peopleCount}: ${person.name}`);
+
+          // Create FormData for this specific person's files
+          const personFormData = new FormData();
+          personFormData.append('documents', documents);
+
+          // Add only the files that belong to this person
+          if (pdfFiles && pdfFiles.length > 0) {
+            person.fileIndices.forEach((fileIndex: number) => {
+              if (fileIndex < pdfFiles.length) {
+                personFormData.append('pdfFiles', pdfFiles[fileIndex]);
+              }
+            });
+          }
+
+          if (audioFiles && audioFiles.length > 0) {
+            person.fileIndices.forEach((fileIndex: number) => {
+              const audioIndex = fileIndex - (pdfFiles?.length || 0);
+              if (audioIndex >= 0 && audioIndex < audioFiles.length) {
+                personFormData.append('audioFiles', audioFiles[audioIndex]);
+              }
+            });
+          }
+
+          // Analyze this person's case
+          const analyzeResponse = await fetch('/api/analyze-single', {
+            method: 'POST',
+            body: personFormData,
+          });
+
+          if (!analyzeResponse.ok) {
+            throw new Error(`Failed to analyze case for ${person.name}`);
+          }
+
+          const analyzeResult = await analyzeResponse.json();
+          analysisIds.push(analyzeResult.id);
+
+          // Update progress
+          setProgress(i + 1);
         }
 
-        // Show success message and redirect
-        alert(`Successfully analyzed ${result.results.length} cases! Redirecting to overview...`);
-        router.push('/');
-      } else if (result.analysis) {
-        // Single person - use person's name from analysis
-        const caseName = result.analysis.personName || 'Unknown Case';
+        // All cases analyzed - redirect to overview
+        setLoadingMessage("Complete!");
+        setLoadingSubMessage(`Successfully analyzed ${peopleCount} cases`);
 
-        // Save analysis and redirect to full view
-        const id = saveAnalysis(caseName, result.analysis);
-        router.push(`/analysis/${id}`);
+        setTimeout(() => {
+          alert(`Successfully analyzed ${peopleCount} cases! Redirecting to overview...`);
+          router.push('/');
+        }, 500);
       } else {
-        throw new Error('Invalid response format from server.');
+        // Single person - analyze normally
+        setLoadingMessage("Analyzing case...");
+        setLoadingSubMessage("Processing documents...");
+
+        const analyzeFormData = new FormData();
+        analyzeFormData.append('documents', documents);
+
+        if (pdfFiles && pdfFiles.length > 0) {
+          pdfFiles.forEach((file) => {
+            analyzeFormData.append('pdfFiles', file);
+          });
+        }
+
+        if (audioFiles && audioFiles.length > 0) {
+          audioFiles.forEach((file) => {
+            analyzeFormData.append('audioFiles', file);
+          });
+        }
+
+        const analyzeResponse = await fetch('/api/analyze-single', {
+          method: 'POST',
+          body: analyzeFormData,
+        });
+
+        if (!analyzeResponse.ok) {
+          const errorData = await analyzeResponse.json();
+          throw new Error(errorData.error || 'Failed to analyze case');
+        }
+
+        const result = await analyzeResponse.json();
+
+        if (result.id) {
+          router.push(`/analysis/${result.id}`);
+        } else {
+          throw new Error('Invalid response format from server.');
+        }
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'An unknown error occurred.');
     } finally {
       setIsLoading(false);
+      setProgress(0);
+      setTotalCases(0);
     }
   }, [router]);
 
@@ -86,7 +160,7 @@ const AnalyzePage: React.FC = () => {
 
   const renderContent = () => {
     if (isLoading) {
-      return <Loader message={loadingMessage} subMessage={loadingSubMessage} />;
+      return <Loader message={loadingMessage} subMessage={loadingSubMessage} progress={progress} total={totalCases} />;
     }
 
     if (error) {

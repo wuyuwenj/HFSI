@@ -2,24 +2,43 @@
 
 import React, { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { getAllAnalyses, deleteAnalysis, type AnalysisRecord } from '@/lib/analysisStorage';
+
+interface AnalysisListItem {
+  id: string;
+  caseName: string;
+  personName: string;
+  riskScore: number;
+  createdAt: string;
+}
 
 type SortColumn = 'caseName' | 'date' | 'score' | 'assessment';
 type SortDirection = 'asc' | 'desc';
 
 const OverviewDashboard: React.FC = () => {
   const router = useRouter();
-  const [analyses, setAnalyses] = useState<AnalysisRecord[]>([]);
+  const [analyses, setAnalyses] = useState<AnalysisListItem[]>([]);
   const [sortColumn, setSortColumn] = useState<SortColumn>('date');
   const [sortDirection, setSortDirection] = useState<SortDirection>('desc');
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     loadAnalyses();
   }, []);
 
-  const loadAnalyses = () => {
-    const data = getAllAnalyses();
-    setAnalyses(data);
+  const loadAnalyses = async () => {
+    try {
+      setLoading(true);
+      const response = await fetch('/api/analyses');
+      if (!response.ok) {
+        throw new Error('Failed to fetch analyses');
+      }
+      const data = await response.json();
+      setAnalyses(data);
+    } catch (error) {
+      console.error('Error loading analyses:', error);
+    } finally {
+      setLoading(false);
+    }
   };
 
   const handleSort = (column: SortColumn) => {
@@ -68,11 +87,21 @@ const OverviewDashboard: React.FC = () => {
     router.push(`/analysis/${id}`);
   };
 
-  const handleDelete = (e: React.MouseEvent, id: string) => {
+  const handleDelete = async (e: React.MouseEvent, id: string) => {
     e.stopPropagation(); // Prevent row click
     if (confirm('Are you sure you want to delete this analysis?')) {
-      deleteAnalysis(id);
-      loadAnalyses();
+      try {
+        const response = await fetch(`/api/analyses/${id}`, {
+          method: 'DELETE',
+        });
+        if (!response.ok) {
+          throw new Error('Failed to delete analysis');
+        }
+        loadAnalyses();
+      } catch (error) {
+        console.error('Error deleting analysis:', error);
+        alert('Failed to delete analysis');
+      }
     }
   };
 
@@ -139,7 +168,12 @@ const OverviewDashboard: React.FC = () => {
         </div>
 
         {/* Analysis List */}
-        {analyses.length === 0 ? (
+        {loading ? (
+          <div className="bg-slate-800 rounded-lg shadow-2xl p-12 text-center">
+            <div className="animate-spin w-16 h-16 border-4 border-brand-secondary border-t-transparent rounded-full mx-auto mb-4"></div>
+            <p className="text-gray-300">Loading analyses...</p>
+          </div>
+        ) : analyses.length === 0 ? (
           <div className="bg-slate-800 rounded-lg shadow-2xl p-12 text-center">
             <svg xmlns="http://www.w3.org/2000/svg" className="h-16 w-16 text-gray-500 mx-auto mb-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
