@@ -89,15 +89,19 @@ const OverviewDashboard: React.FC = () => {
 
   const handleDelete = async (e: React.MouseEvent, id: string) => {
     e.stopPropagation(); // Prevent row click
+
     if (confirm('Are you sure you want to delete this analysis?')) {
       try {
         const response = await fetch(`/api/analyses/${id}`, {
           method: 'DELETE',
         });
+
         if (!response.ok) {
           throw new Error('Failed to delete analysis');
         }
-        loadAnalyses();
+
+        // Update state to remove the deleted item
+        setAnalyses(analyses.filter(a => a.id !== id));
       } catch (error) {
         console.error('Error deleting analysis:', error);
         alert('Failed to delete analysis');
@@ -220,10 +224,14 @@ const OverviewDashboard: React.FC = () => {
                     <td className={`px-6 py-4 whitespace-nowrap text-sm font-medium ${getInnocenceColor(record.riskScore)}`}>
                       {getInnocenceLevel(record.riskScore)}
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
+                    <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium" onClick={(e) => e.stopPropagation()}>
                       <button
-                        onClick={(e) => handleDelete(e, record.id)}
-                        className="text-red-400 hover:text-red-300 transition duration-150"
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleDelete(e, record.id);
+                        }}
+                        className="text-red-400 hover:text-red-300 transition duration-150 px-3 py-1 rounded hover:bg-red-900/20"
                       >
                         Delete
                       </button>
