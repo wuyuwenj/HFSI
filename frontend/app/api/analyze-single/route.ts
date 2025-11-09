@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { GoogleGenAI, Type } from "@google/genai";
 import type { CaseAnalysis } from "@/types";
-import { prisma } from "@/lib/prisma";
+import { supabase } from "@/lib/supabase";
 
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY! });
 
@@ -122,8 +122,10 @@ const analysisSchema = {
 };
 
 const saveAnalysisToDatabase = async (caseName: string, analysis: CaseAnalysis) => {
-  const savedAnalysis = await prisma.analysis.create({
-    data: {
+  // Insert main analysis record
+  const { data: savedAnalysis, error: analysisError } = await supabase
+    .from('Analysis')
+    .insert({
       caseName,
       personName: analysis.personName,
       crimeConvicted: analysis.crimeConvicted,
@@ -131,14 +133,38 @@ const saveAnalysisToDatabase = async (caseName: string, analysis: CaseAnalysis) 
       paroleBoardFocus: analysis.paroleBoardFocus,
       summary: analysis.summary,
       riskScore: analysis.riskScore,
-      keyQuotes: { create: analysis.keyQuotes.map(q => ({ quote: q.quote, lineNumber: q.lineNumber, context: q.context })) },
-      timelineEvents: { create: analysis.timelineEvents.map(e => ({ date: e.date, event: e.event, confidence: e.confidence })) },
-      inconsistencies: { create: analysis.inconsistencies.map(i => ({ statement1: i.statement1, source1: i.source1, statement2: i.statement2, source2: i.source2, analysis: i.analysis })) },
-      evidenceItems: { create: analysis.evidenceMatrix.map(e => ({ evidence: e.evidence, type: e.type, reliability: e.reliability, notes: e.notes })) },
-      precedentCases: { create: analysis.precedentCases.map(p => ({ caseName: p.caseName, summary: p.summary, outcome: p.outcome })) },
-      criticalAlerts: { create: analysis.criticalAlerts.map(a => ({ title: a.title, description: a.description, severity: a.severity })) },
-    },
-  });
+    })
+    .select()
+    .single();
+
+  if (analysisError || !savedAnalysis) {
+    throw new Error('Failed to save analysis');
+  }
+
+  const analysisId = savedAnalysis.id;
+
+  // Insert all related records in parallel
+  await Promise.all([
+    supabase.from('KeyQuote').insert(
+      analysis.keyQuotes.map(q => ({ analysisId, quote: q.quote, lineNumber: q.lineNumber, context: q.context }))
+    ),
+    supabase.from('TimelineEvent').insert(
+      analysis.timelineEvents.map(e => ({ analysisId, date: e.date, event: e.event, confidence: e.confidence }))
+    ),
+    supabase.from('Inconsistency').insert(
+      analysis.inconsistencies.map(i => ({ analysisId, statement1: i.statement1, source1: i.source1, statement2: i.statement2, source2: i.source2, analysis: i.analysis }))
+    ),
+    supabase.from('EvidenceItem').insert(
+      analysis.evidenceMatrix.map(e => ({ analysisId, evidence: e.evidence, type: e.type, reliability: e.reliability, notes: e.notes }))
+    ),
+    supabase.from('PrecedentCase').insert(
+      analysis.precedentCases.map(p => ({ analysisId, caseName: p.caseName, summary: p.summary, outcome: p.outcome }))
+    ),
+    supabase.from('CriticalAlert').insert(
+      analysis.criticalAlerts.map(a => ({ analysisId, title: a.title, description: a.description, severity: a.severity }))
+    ),
+  ]);
+
   return savedAnalysis;
 };
 
