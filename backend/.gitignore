@@ -1,44 +1,5 @@
-# Dependencies
-node_modules/
-.pnp
-.pnp.js
-backend/.env
-
-# Testing
-coverage/
-
-# Next.js
-.next/
-out/
-build/
-dist/
-
-# Production
-*.log*
-
-# Misc
-.DS_Store
-*.pem
-
-# Debug
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-
-# Local env files
-.env*.local
-.env
-
-# Vercel
-.vercel
-
-# Typescript
-*.tsbuildinfo
-next-env.d.ts
-
-
 # Environment variables
-backend.env
+.env
 .env.local
 
 # Python
@@ -90,4 +51,3 @@ htmlcov/
 # Database
 *.db
 *.sqlite
-
