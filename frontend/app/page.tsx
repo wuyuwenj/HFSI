@@ -22,6 +22,10 @@ const OverviewDashboard: React.FC = () => {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    // Clear any stale localStorage data
+    if (typeof window !== 'undefined') {
+      localStorage.removeItem('verijudex_analyses');
+    }
     loadAnalyses();
   }, []);
 
