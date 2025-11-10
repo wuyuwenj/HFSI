@@ -57,7 +57,7 @@ const transcribeAudioWithSpeakers = async (file: File): Promise<TranscriptionEnt
     };
 
     const response = await ai.models.generateContent({
-      model: "gemini-2.0-flash-exp",
+      model: "gemini-2.5-flash",
       contents: [audioPart, textPart],
       config: {
         responseMimeType: "application/json",
@@ -73,9 +73,29 @@ const transcribeAudioWithSpeakers = async (file: File): Promise<TranscriptionEnt
 
     try {
       const parsedJson = JSON.parse(jsonText);
-      return parsedJson as TranscriptionEntry[];
+
+      // Validate the response is an array
+      if (!Array.isArray(parsedJson)) {
+        console.error("AI response is not an array:", parsedJson);
+        throw new Error("Expected array of transcription entries");
+      }
+
+      // Validate each entry has required fields
+      const validEntries = parsedJson.filter(entry =>
+        entry &&
+        typeof entry.timestamp === 'string' &&
+        typeof entry.speaker === 'string' &&
+        typeof entry.dialogue === 'string'
+      );
+
+      if (validEntries.length === 0) {
+        throw new Error("No valid transcription entries found");
+      }
+
+      return validEntries as TranscriptionEntry[];
     } catch (parseError) {
-      console.error("Failed to parse JSON response:", jsonText);
+      console.error("Failed to parse JSON response:", jsonText.substring(0, 500));
+      console.error("Parse error:", parseError);
       throw new Error("The AI returned a response in an unexpected format");
     }
   } catch (error) {
