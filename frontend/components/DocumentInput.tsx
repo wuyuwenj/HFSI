@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useRef } from 'react';
+import { supabase } from '@/lib/supabase';
 
 interface DocumentInputProps {
   onAnalyze: (documents: string, pdfFiles?: File[], audioFiles?: File[], mode?: 'detailed' | 'bulk') => void;
@@ -25,27 +26,52 @@ const DocumentInput: React.FC<DocumentInputProps> = ({ onAnalyze }) => {
   const audioInputRef = useRef<HTMLInputElement>(null);
 
   const uploadFileToStorage = async (file: File, type: 'pdf' | 'audio'): Promise<UploadedFileRef> => {
-    const formData = new FormData();
-    formData.append('file', file);
-    formData.append('type', type);
+    // Upload directly to Supabase Storage from the client (bypasses Vercel's 4.5MB limit)
+    const bucketName = type === 'audio' ? 'audio-files' : 'pdf-files';
+    const timestamp = Date.now();
+    const fileName = `${timestamp}-${file.name}`;
 
-    const response = await fetch('/api/upload', {
-      method: 'POST',
-      body: formData,
-    });
+    // Upload directly to Supabase
+    const { data, error } = await supabase.storage
+      .from(bucketName)
+      .upload(fileName, file, {
+        contentType: file.type,
+        upsert: false
+      });
 
-    if (!response.ok) {
-      throw new Error(`Failed to upload ${file.name}`);
+    if (error) {
+      console.error('Supabase upload error:', error);
+      throw new Error(`Failed to upload ${file.name}: ${error.message}`);
     }
 
-    return await response.json();
+    // Get the public URL
+    const { data: urlData } = supabase.storage
+      .from(bucketName)
+      .getPublicUrl(fileName);
+
+    return {
+      fileName,
+      bucket: bucketName,
+      url: urlData.publicUrl
+    };
   };
 
   const handleAnalyzeClick = async () => {
     // Check file sizes first
     const totalSize = [...uploadedPdfs, ...uploadedAudios].reduce((sum, file) => sum + file.size, 0);
+    const totalSizeMB = (totalSize / 1024 / 1024).toFixed(2);
+
     // Use storage-based upload for files > 1MB to avoid Vercel's 4.5MB limit
     const useLargeFileHandler = totalSize > 1 * 1024 * 1024; // 1MB threshold
+
+    console.log('File upload info:', {
+      pdfCount: uploadedPdfs.length,
+      audioCount: uploadedAudios.length,
+      totalSizeBytes: totalSize,
+      totalSizeMB,
+      useLargeFileHandler,
+      threshold: '1MB'
+    });
 
     if (useLargeFileHandler) {
       // Use storage-based upload for large files

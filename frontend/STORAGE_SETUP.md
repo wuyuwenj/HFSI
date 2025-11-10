@@ -35,27 +35,65 @@ Create two new buckets:
   - `audio/webm`
   - `audio/ogg`
 
-### 2. Configure Storage Policies (Optional)
+### 2. Configure Storage Policies (REQUIRED)
 
-**Note**: Since we're using the service role key for server-side operations, RLS policies are automatically bypassed. However, if you want to set up policies for additional security, you can configure them in the **Policies** tab:
+**IMPORTANT**: Files are now uploaded directly from the browser to Supabase Storage to bypass Vercel's 4.5MB limit. You **must** configure RLS policies to allow client-side uploads.
 
-#### Option A: Disable RLS (Recommended for simplicity)
-In the Storage settings for each bucket, you can disable RLS since all operations go through the server-side API.
+Go to **Storage** → Select each bucket → **Policies** tab → Click **"New Policy"**
 
-#### Option B: Configure RLS Policies (For additional security)
-If you prefer to keep RLS enabled:
+#### For `pdf-files` bucket:
 
+**Policy 1: Allow public uploads**
 ```sql
--- For pdf-files bucket
-CREATE POLICY "Service role access"
-ON storage.objects FOR ALL
-USING (bucket_id = 'pdf-files');
+CREATE POLICY "Allow public uploads"
+ON storage.objects FOR INSERT
+WITH CHECK (bucket_id = 'pdf-files');
+```
 
--- For audio-files bucket
-CREATE POLICY "Service role access"
-ON storage.objects FOR ALL
+**Policy 2: Allow public reads**
+```sql
+CREATE POLICY "Allow public reads"
+ON storage.objects FOR SELECT
+USING (bucket_id = 'pdf-files');
+```
+
+**Policy 3: Allow server to delete**
+```sql
+CREATE POLICY "Allow deletes"
+ON storage.objects FOR DELETE
+USING (bucket_id = 'pdf-files');
+```
+
+#### For `audio-files` bucket:
+
+**Policy 1: Allow public uploads**
+```sql
+CREATE POLICY "Allow public uploads"
+ON storage.objects FOR INSERT
+WITH CHECK (bucket_id = 'audio-files');
+```
+
+**Policy 2: Allow public reads**
+```sql
+CREATE POLICY "Allow public reads"
+ON storage.objects FOR SELECT
 USING (bucket_id = 'audio-files');
 ```
+
+**Policy 3: Allow server to delete**
+```sql
+CREATE POLICY "Allow deletes"
+ON storage.objects FOR DELETE
+USING (bucket_id = 'audio-files');
+```
+
+**OR use the Supabase Dashboard UI:**
+1. Go to Storage → select bucket → Policies
+2. Click "New Policy"
+3. Choose "For full customization" template
+4. Set operation: INSERT, SELECT, or DELETE
+5. Leave policy expression empty (allows all)
+6. Click "Review" → "Save policy"
 
 ### 3. Verify Setup
 
