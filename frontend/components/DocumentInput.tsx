@@ -44,7 +44,8 @@ const DocumentInput: React.FC<DocumentInputProps> = ({ onAnalyze }) => {
   const handleAnalyzeClick = async () => {
     // Check file sizes first
     const totalSize = [...uploadedPdfs, ...uploadedAudios].reduce((sum, file) => sum + file.size, 0);
-    const useLargeFileHandler = totalSize > 3 * 1024 * 1024; // 3MB threshold
+    // Use storage-based upload for files > 1MB to avoid Vercel's 4.5MB limit
+    const useLargeFileHandler = totalSize > 1 * 1024 * 1024; // 1MB threshold
 
     if (useLargeFileHandler) {
       // Use storage-based upload for large files
