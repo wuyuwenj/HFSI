@@ -567,6 +567,9 @@ const saveAnalysisToDatabase = async (caseName: string, analysis: CaseAnalysis) 
   }
 };
 
+export const maxDuration = 60; // Maximum allowed duration for Vercel Hobby is 60 seconds
+export const runtime = 'nodejs';
+
 export async function POST(request: Request) {
   try {
     const formData = await request.formData();
@@ -589,34 +592,108 @@ export async function POST(request: Request) {
       const detection = await detectMultiplePeople(documents, pdfFiles, audioFiles);
 
       if (detection.multiplePeople && detection.people.length > 1) {
-        // Multiple people detected - analyze each separately
+        // Multiple people detected - analyze each separately with progress streaming
         console.log(`Detected ${detection.people.length} different people, analyzing separately...`);
 
-        const savedAnalyses = [];
+        const encoder = new TextEncoder();
+        const stream = new ReadableStream({
+          async start(controller) {
+            try {
+              const savedAnalyses = [];
+              const total = detection.people.length;
 
-        for (const person of detection.people) {
-          console.log(`Analyzing case for: ${person.name}`);
+              // Send initial progress
+              controller.enqueue(
+                encoder.encode(
+                  JSON.stringify({
+                    type: 'progress',
+                    current: 0,
+                    total,
+                    message: `Starting bulk analysis of ${total} cases...`,
+                  }) + '\n'
+                )
+              );
 
-          // Filter files for this person
-          const personFiles = person.fileIndices.map(idx => pdfFiles[idx]).filter(f => f !== undefined);
+              for (let i = 0; i < detection.people.length; i++) {
+                const person = detection.people[i];
+                console.log(`Analyzing case for: ${person.name} (${i + 1}/${total})`);
 
-          // Analyze this person's documents
-          const analysis = await analyzeCaseDocuments("", personFiles, []);
+                // Send progress update
+                controller.enqueue(
+                  encoder.encode(
+                    JSON.stringify({
+                      type: 'progress',
+                      current: i,
+                      total,
+                      message: `Analyzing ${person.name}...`,
+                      caseName: person.name,
+                    }) + '\n'
+                  )
+                );
 
-          // Save to database
-          const savedAnalysis = await saveAnalysisToDatabase(person.name, analysis);
-          savedAnalyses.push(savedAnalysis);
-        }
+                // Filter files for this person
+                const personFiles = person.fileIndices
+                  .map((idx) => pdfFiles[idx])
+                  .filter((f) => f !== undefined);
 
-        // Return bulk results with database IDs
-        return NextResponse.json({
-          bulk: true,
-          count: savedAnalyses.length,
-          analyses: savedAnalyses.map(a => ({
-            id: a.id,
-            caseName: a.caseName,
-            riskScore: a.riskScore,
-          })),
+                // Analyze this person's documents
+                const analysis = await analyzeCaseDocuments('', personFiles, []);
+
+                // Save to database
+                const savedAnalysis = await saveAnalysisToDatabase(person.name, analysis);
+                savedAnalyses.push(savedAnalysis);
+
+                // Send completion for this case
+                controller.enqueue(
+                  encoder.encode(
+                    JSON.stringify({
+                      type: 'progress',
+                      current: i + 1,
+                      total,
+                      message: `Completed ${person.name}`,
+                      caseName: person.name,
+                    }) + '\n'
+                  )
+                );
+              }
+
+              // Send final result
+              controller.enqueue(
+                encoder.encode(
+                  JSON.stringify({
+                    type: 'complete',
+                    bulk: true,
+                    count: savedAnalyses.length,
+                    analyses: savedAnalyses.map((a) => ({
+                      id: a.id,
+                      caseName: a.caseName,
+                      riskScore: a.riskScore,
+                    })),
+                  }) + '\n'
+                )
+              );
+
+              controller.close();
+            } catch (error) {
+              controller.enqueue(
+                encoder.encode(
+                  JSON.stringify({
+                    type: 'error',
+                    error: error instanceof Error ? error.message : 'Unknown error',
+                  }) + '\n'
+                )
+              );
+              controller.close();
+            }
+          },
+        });
+
+        return new Response(stream, {
+          headers: {
+            'Content-Type': 'application/x-ndjson',
+            'Cache-Control': 'no-cache',
+            'Connection': 'keep-alive',
+          },
         });
       }
     }

@@ -20,14 +20,53 @@ const OverviewDashboard: React.FC = () => {
   const [sortColumn, setSortColumn] = useState<SortColumn>('date');
   const [sortDirection, setSortDirection] = useState<SortDirection>('desc');
   const [loading, setLoading] = useState(true);
+  const [newAnalysisIds, setNewAnalysisIds] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     // Clear any stale localStorage data
     if (typeof window !== 'undefined') {
       localStorage.removeItem('verijudex_analyses');
+      localStorage.removeItem('evidex_new_records');
+      localStorage.removeItem('evidex_seen_records');
     }
     loadAnalyses();
+    cleanupExpiredNewTags();
   }, []);
+
+  // Check for expired new tags every 30 seconds
+  useEffect(() => {
+    const interval = setInterval(() => {
+      cleanupExpiredNewTags();
+    }, 30000); // Check every 30 seconds
+
+    return () => clearInterval(interval);
+  }, []);
+
+  const cleanupExpiredNewTags = () => {
+    if (typeof window === 'undefined') return;
+
+    const storedNew = localStorage.getItem('evidex_new_analyses');
+    if (!storedNew) return;
+
+    const newAnalyses = JSON.parse(storedNew);
+    const now = Date.now();
+    const fiveMinutes = 5 * 60 * 1000;
+    let hasChanges = false;
+
+    // Remove expired entries
+    Object.keys(newAnalyses).forEach(id => {
+      if (now - newAnalyses[id] > fiveMinutes) {
+        delete newAnalyses[id];
+        hasChanges = true;
+      }
+    });
+
+    if (hasChanges) {
+      localStorage.setItem('evidex_new_analyses', JSON.stringify(newAnalyses));
+    }
+
+    setNewAnalysisIds(new Set(Object.keys(newAnalyses)));
+  };
 
   const loadAnalyses = async () => {
     try {
@@ -38,6 +77,9 @@ const OverviewDashboard: React.FC = () => {
       }
       const data = await response.json();
       setAnalyses(data);
+
+      // Check for new tags
+      cleanupExpiredNewTags();
     } catch (error) {
       console.error('Error loading analyses:', error);
     } finally {
@@ -123,6 +165,10 @@ const OverviewDashboard: React.FC = () => {
     if (score >= 70) return 'Likely Innocent';
     if (score >= 40) return 'Uncertain';
     return 'Likely Guilty';
+  };
+
+  const isNewAnalysis = (recordId: string): boolean => {
+    return newAnalysisIds.has(recordId);
   };
 
   const SortableHeader: React.FC<{ column: SortColumn; children: React.ReactNode }> = ({ column, children }) => {
@@ -231,14 +277,32 @@ const OverviewDashboard: React.FC = () => {
                     className="hover:bg-slate-700 cursor-pointer transition duration-150"
                   >
                     <td className="px-6 py-4 text-sm font-medium text-white">
-                      <div className="truncate max-w-[300px]" title={record.caseName}>
-                        {record.caseName}
+                      <div className="flex items-center gap-2 max-w-[300px]">
+                        <div className="truncate flex-1" title={record.caseName}>
+                          {record.caseName}
+                        </div>
+                        {isNewAnalysis(record.id) && (
+                          <span className="flex-shrink-0 px-2 py-0.5 bg-green-500 text-white text-xs font-bold rounded-full uppercase animate-pulse">
+                            New
+                          </span>
+                        )}
                       </div>
                     </td>
                     <td className="px-6 py-4 text-sm text-gray-300">
                       <div className="space-y-1">
-                        <div>{new Date(record.createdAt).toLocaleDateString()}</div>
-                        <div className="text-xs text-gray-500">{new Date(record.createdAt).toLocaleTimeString()}</div>
+                        <div>{new Date(record.createdAt).toLocaleDateString('en-US', {
+                          year: 'numeric',
+                          month: '2-digit',
+                          day: '2-digit'
+                        })}</div>
+                        <div className="text-xs text-gray-500">
+                          {new Date(record.createdAt).toLocaleTimeString('en-US', {
+                            hour: '2-digit',
+                            minute: '2-digit',
+                            second: '2-digit',
+                            hour12: true
+                          })}
+                        </div>
                       </div>
                     </td>
                     <td className={`px-6 py-4 text-sm font-bold ${getInnocenceColor(record.riskScore)}`}>

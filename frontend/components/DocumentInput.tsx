@@ -6,6 +6,12 @@ interface DocumentInputProps {
   onAnalyze: (documents: string, pdfFiles?: File[], audioFiles?: File[], mode?: 'detailed' | 'bulk') => void;
 }
 
+interface UploadedFileRef {
+  fileName: string;
+  bucket: string;
+  url: string;
+}
+
 type UploadMode = 'detailed' | 'bulk';
 
 const DocumentInput: React.FC<DocumentInputProps> = ({ onAnalyze }) => {
@@ -13,19 +19,100 @@ const DocumentInput: React.FC<DocumentInputProps> = ({ onAnalyze }) => {
   const [uploadedPdfs, setUploadedPdfs] = useState<File[]>([]);
   const [uploadedAudios, setUploadedAudios] = useState<File[]>([]);
   const [uploadMode, setUploadMode] = useState<UploadMode>('detailed');
+  const [isUploading, setIsUploading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const audioInputRef = useRef<HTMLInputElement>(null);
 
-  const handleAnalyzeClick = () => {
-    // For bulk mode, only pass PDF files and empty text/audio
-    if (uploadMode === 'bulk') {
-      if (uploadedPdfs.length > 0) {
-        onAnalyze('', uploadedPdfs, [], 'bulk');
+  const uploadFileToStorage = async (file: File, type: 'pdf' | 'audio'): Promise<UploadedFileRef> => {
+    const formData = new FormData();
+    formData.append('file', file);
+    formData.append('type', type);
+
+    const response = await fetch('/api/upload', {
+      method: 'POST',
+      body: formData,
+    });
+
+    if (!response.ok) {
+      throw new Error(`Failed to upload ${file.name}`);
+    }
+
+    return await response.json();
+  };
+
+  const handleAnalyzeClick = async () => {
+    // Check file sizes first
+    const totalSize = [...uploadedPdfs, ...uploadedAudios].reduce((sum, file) => sum + file.size, 0);
+    const useLargeFileHandler = totalSize > 3 * 1024 * 1024; // 3MB threshold
+
+    if (useLargeFileHandler) {
+      // Use storage-based upload for large files
+      setIsUploading(true);
+      setUploadProgress(0);
+
+      try {
+        const totalFiles = uploadedPdfs.length + uploadedAudios.length;
+        let uploadedCount = 0;
+
+        // Upload PDFs to storage
+        const pdfRefs: UploadedFileRef[] = [];
+        for (const pdf of uploadedPdfs) {
+          const ref = await uploadFileToStorage(pdf, 'pdf');
+          pdfRefs.push(ref);
+          uploadedCount++;
+          setUploadProgress(Math.round((uploadedCount / totalFiles) * 100));
+        }
+
+        // Upload audio files to storage
+        const audioRefs: UploadedFileRef[] = [];
+        for (const audio of uploadedAudios) {
+          const ref = await uploadFileToStorage(audio, 'audio');
+          audioRefs.push(ref);
+          uploadedCount++;
+          setUploadProgress(Math.round((uploadedCount / totalFiles) * 100));
+        }
+
+        setUploadProgress(100);
+
+        // Call analyze-stored endpoint
+        const response = await fetch('/api/analyze-stored', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            documents,
+            pdfPaths: pdfRefs.map(ref => ({ fileName: ref.fileName, bucket: ref.bucket })),
+            audioPaths: audioRefs.map(ref => ({ fileName: ref.fileName, bucket: ref.bucket })),
+          }),
+        });
+
+        if (!response.ok) {
+          throw new Error('Failed to analyze case');
+        }
+
+        const result = await response.json();
+
+        // Navigate to the analysis result
+        window.location.href = `/analysis/${result.id}`;
+      } catch (error) {
+        console.error('Error uploading files:', error);
+        alert('Failed to upload files. Please try again or use smaller files.');
+      } finally {
+        setIsUploading(false);
+        setUploadProgress(0);
       }
     } else {
-      // For detailed mode, pass everything
-      if (documents.trim() || uploadedPdfs.length > 0 || uploadedAudios.length > 0) {
-        onAnalyze(documents, uploadedPdfs, uploadedAudios, 'detailed');
+      // Use direct upload for smaller files (original method)
+      if (uploadMode === 'bulk') {
+        if (uploadedPdfs.length > 0) {
+          onAnalyze('', uploadedPdfs, [], 'bulk');
+        }
+      } else {
+        if (documents.trim() || uploadedPdfs.length > 0 || uploadedAudios.length > 0) {
+          onAnalyze(documents, uploadedPdfs, uploadedAudios, 'detailed');
+        }
       }
     }
   };
@@ -331,23 +418,57 @@ const DocumentInput: React.FC<DocumentInputProps> = ({ onAnalyze }) => {
               </button>
             )}
           </div>
+
+          {/* Upload Progress Indicator */}
+          {isUploading && (
+            <div className="bg-slate-700 p-4 rounded-md">
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-white font-semibold">Uploading files...</span>
+                <span className="text-blue-300 font-bold">{uploadProgress}%</span>
+              </div>
+              <div className="w-full bg-slate-600 rounded-full h-3 overflow-hidden">
+                <div
+                  className="bg-blue-500 h-3 rounded-full transition-all duration-300 ease-out"
+                  style={{ width: `${uploadProgress}%` }}
+                />
+              </div>
+              <p className="text-gray-400 text-sm mt-2">
+                Please wait while we upload your files to secure storage...
+              </p>
+            </div>
+          )}
+
           <button
             onClick={handleAnalyzeClick}
             disabled={
-              uploadMode === 'detailed'
-                ? (!documents.trim() && uploadedPdfs.length === 0 && uploadedAudios.length === 0)
-                : (uploadedPdfs.length === 0)
+              isUploading || (
+                uploadMode === 'detailed'
+                  ? (!documents.trim() && uploadedPdfs.length === 0 && uploadedAudios.length === 0)
+                  : (uploadedPdfs.length === 0)
+              )
             }
             className="w-full py-3 px-6 bg-brand-secondary text-white font-bold rounded-md hover:bg-blue-500 disabled:bg-slate-600 disabled:cursor-not-allowed transition duration-200 flex items-center justify-center gap-2"
           >
-            <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
-              <path fillRule="evenodd" d="M4 2a2 2 0 00-2 2v12a2 2 0 002 2h12a2 2 0 002-2V4a2 2 0 00-2-2H4zm3 2a1 1 0 011-1h6a1 1 0 110 2H8a1 1 0 01-1-1zm-1 5a1 1 0 000 2h10a1 1 0 100-2H6zm0 4a1 1 0 100 2h10a1 1 0 100-2H6z" clipRule="evenodd" />
-            </svg>
-            {uploadMode === 'bulk'
-              ? uploadedPdfs.length > 0
-                ? `Analyze ${uploadedPdfs.length} File${uploadedPdfs.length > 1 ? 's' : ''}`
-                : 'Analyze All Cases'
-              : 'Analyze Case'}
+            {isUploading ? (
+              <>
+                <svg className="animate-spin h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                </svg>
+                Uploading...
+              </>
+            ) : (
+              <>
+                <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                  <path fillRule="evenodd" d="M4 2a2 2 0 00-2 2v12a2 2 0 002 2h12a2 2 0 002-2V4a2 2 0 00-2-2H4zm3 2a1 1 0 011-1h6a1 1 0 110 2H8a1 1 0 01-1-1zm-1 5a1 1 0 000 2h10a1 1 0 100-2H6zm0 4a1 1 0 100 2h10a1 1 0 100-2H6z" clipRule="evenodd" />
+                </svg>
+                {uploadMode === 'bulk'
+                  ? uploadedPdfs.length > 0
+                    ? `Analyze ${uploadedPdfs.length} File${uploadedPdfs.length > 1 ? 's' : ''}`
+                    : 'Analyze All Cases'
+                  : 'Analyze Case'}
+              </>
+            )}
           </button>
         </div>
       </div>

@@ -2,10 +2,11 @@ import { NextResponse } from "next/server";
 import { GoogleGenAI, Type } from "@google/genai";
 import type { CaseAnalysis } from "@/types";
 import { supabase } from "@/lib/supabase";
+import { supabaseServer } from "@/lib/supabase-server";
 
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY! });
 
-// Import the analysis schema and functions from analyze route
+// Import the analysis schema from analyze-single route
 const analysisSchema = {
   type: Type.OBJECT,
   properties: {
@@ -122,11 +123,9 @@ const analysisSchema = {
 };
 
 const saveAnalysisToDatabase = async (caseName: string, analysis: CaseAnalysis) => {
-  // Generate UUID for the analysis
   const analysisId = crypto.randomUUID();
   const now = new Date().toISOString();
 
-  // Insert main analysis record
   const { data: savedAnalysis, error: analysisError } = await supabase
     .from('Analysis')
     .insert({
@@ -149,10 +148,9 @@ const saveAnalysisToDatabase = async (caseName: string, analysis: CaseAnalysis) 
     throw new Error(`Failed to save analysis: ${analysisError?.message || 'Unknown error'}`);
   }
 
-  // Insert all related records in parallel (only if arrays are not empty)
   const insertPromises = [];
 
-  if (analysis.keyQuotes.length > 0) {
+  if (analysis.keyQuotes?.length > 0) {
     insertPromises.push(
       supabase.from('KeyQuote').insert(
         analysis.keyQuotes.map(q => ({ id: crypto.randomUUID(), analysisId, quote: q.quote, lineNumber: q.lineNumber, context: q.context }))
@@ -160,7 +158,7 @@ const saveAnalysisToDatabase = async (caseName: string, analysis: CaseAnalysis) 
     );
   }
 
-  if (analysis.timelineEvents.length > 0) {
+  if (analysis.timelineEvents?.length > 0) {
     insertPromises.push(
       supabase.from('TimelineEvent').insert(
         analysis.timelineEvents.map(e => ({ id: crypto.randomUUID(), analysisId, date: e.date, event: e.event, confidence: e.confidence }))
@@ -168,7 +166,7 @@ const saveAnalysisToDatabase = async (caseName: string, analysis: CaseAnalysis) 
     );
   }
 
-  if (analysis.inconsistencies.length > 0) {
+  if (analysis.inconsistencies?.length > 0) {
     insertPromises.push(
       supabase.from('Inconsistency').insert(
         analysis.inconsistencies.map(i => ({ id: crypto.randomUUID(), analysisId, statement1: i.statement1, source1: i.source1, statement2: i.statement2, source2: i.source2, analysis: i.analysis }))
@@ -176,7 +174,7 @@ const saveAnalysisToDatabase = async (caseName: string, analysis: CaseAnalysis) 
     );
   }
 
-  if (analysis.evidenceMatrix.length > 0) {
+  if (analysis.evidenceMatrix?.length > 0) {
     insertPromises.push(
       supabase.from('EvidenceItem').insert(
         analysis.evidenceMatrix.map(e => ({ id: crypto.randomUUID(), analysisId, evidence: e.evidence, type: e.type, reliability: e.reliability, notes: e.notes }))
@@ -184,7 +182,7 @@ const saveAnalysisToDatabase = async (caseName: string, analysis: CaseAnalysis) 
     );
   }
 
-  if (analysis.precedentCases.length > 0) {
+  if (analysis.precedentCases?.length > 0) {
     insertPromises.push(
       supabase.from('PrecedentCase').insert(
         analysis.precedentCases.map(p => ({ id: crypto.randomUUID(), analysisId, caseName: p.caseName, summary: p.summary, outcome: p.outcome }))
@@ -192,7 +190,7 @@ const saveAnalysisToDatabase = async (caseName: string, analysis: CaseAnalysis) 
     );
   }
 
-  if (analysis.criticalAlerts.length > 0) {
+  if (analysis.criticalAlerts?.length > 0) {
     insertPromises.push(
       supabase.from('CriticalAlert').insert(
         analysis.criticalAlerts.map(a => ({ id: crypto.randomUUID(), analysisId, title: a.title, description: a.description, severity: a.severity }))
@@ -207,15 +205,13 @@ const saveAnalysisToDatabase = async (caseName: string, analysis: CaseAnalysis) 
   return savedAnalysis;
 };
 
-export const maxDuration = 60; // Maximum allowed duration for Vercel Hobby is 60 seconds
+export const maxDuration = 60;
 export const runtime = 'nodejs';
 
 export async function POST(request: Request) {
   try {
-    const formData = await request.formData();
-    const documents = formData.get("documents") as string || "";
-    const pdfFiles = formData.getAll("pdfFiles") as File[];
-    const audioFiles = formData.getAll("audioFiles") as File[];
+    const body = await request.json();
+    const { documents, pdfPaths, audioPaths } = body;
 
     const promptText = `
       You are **Evidex**, an AI-powered judicial assistant specializing in case document analysis. Your primary function is to evaluate transcripts and evidence to determine the strength of the case against the defendant, operating under the strictest legal standards.
@@ -228,8 +224,6 @@ export async function POST(request: Request) {
           * **Defense Witnesses:** Testimony must be taken at **face value UNLESS proven false or non-credible** by the District Attorney during cross-examination.
 
       Your task is to analyze the provided case documents and generate a structured, comprehensive, and unbiased analysis formatted **strictly as a single JSON object. The final **riskScore** (Innocence Score) must directly reflect the cumulative weight of the flaws and the number of instances where evidence falls short of the **100% certainty** standard. Higher score = higher likelihood of innocence (0 = clearly guilty, 100 = clearly innocent).
-
-      ${documents ? `\n---TEXT DOCUMENTS---\n${documents}\n---` : ''}
 
       **DETAILED DETECTION CRITERIA FOCUS:**
       * **Testimonial Inconsistencies:** Search for contradictions *within* a single witness statement and *between* different witness statements.
@@ -319,15 +313,27 @@ export async function POST(request: Request) {
       contents.push({ text: `\n---TEXT DOCUMENTS---\n${documents}\n---` });
     }
 
-    // Add audio transcripts
-    if (audioFiles.length > 0) {
-      for (const audioFile of audioFiles) {
+    // Download and transcribe audio files from Supabase Storage
+    if (audioPaths && audioPaths.length > 0) {
+      for (const path of audioPaths) {
         try {
-          // Convert audio file to base64 for transcription
-          const audioArrayBuffer = await audioFile.arrayBuffer();
-          const audioBase64 = Buffer.from(audioArrayBuffer).toString("base64");
+          const { bucket, fileName } = path;
 
-          // Call the Gemini AI to transcribe with speaker diarization
+          // Download the file from Supabase Storage
+          const { data, error } = await supabaseServer.storage
+            .from(bucket)
+            .download(fileName);
+
+          if (error) {
+            console.error(`Error downloading audio file ${fileName}:`, error);
+            continue;
+          }
+
+          // Convert to base64
+          const arrayBuffer = await data.arrayBuffer();
+          const audioBase64 = Buffer.from(arrayBuffer).toString("base64");
+
+          // Transcribe with speaker diarization
           const transcriptionResponse = await ai.models.generateContent({
             model: "gemini-2.5-flash",
             contents: [
@@ -336,7 +342,7 @@ export async function POST(request: Request) {
               },
               {
                 inlineData: {
-                  mimeType: audioFile.type || 'audio/mpeg',
+                  mimeType: data.type || 'audio/mpeg',
                   data: audioBase64
                 }
               }
@@ -344,25 +350,46 @@ export async function POST(request: Request) {
           });
 
           const transcription = transcriptionResponse.text || 'Failed to transcribe audio';
-          contents.push({ text: `\n--- AUDIO TRANSCRIPT: ${audioFile.name} ---\n${transcription}\n---\n` });
+          contents.push({ text: `\n--- AUDIO TRANSCRIPT: ${fileName} ---\n${transcription}\n---\n` });
         } catch (error) {
-          console.error(`Error transcribing audio file ${audioFile.name}:`, error);
-          contents.push({ text: `\n--- AUDIO FILE: ${audioFile.name} (transcription failed) ---\n` });
+          console.error(`Error processing audio file ${path.fileName}:`, error);
         }
       }
     }
 
-    // Add PDF files
-    if (pdfFiles.length > 0) {
-      for (const file of pdfFiles) {
-        const arrayBuffer = await file.arrayBuffer();
-        const base64 = Buffer.from(arrayBuffer).toString("base64");
+    // Download and process PDF files from Supabase Storage
+    if (pdfPaths && pdfPaths.length > 0) {
+      for (const path of pdfPaths) {
+        try {
+          const { bucket, fileName } = path;
 
-        if (file.type === 'text/plain') {
-          const text = await file.text();
-          contents.push({ text: `\n--- File: ${file.name} ---\n${text}\n---\n` });
-        } else {
-          contents.push({ inlineData: { mimeType: file.type, data: base64 } });
+          // Download the file from Supabase Storage
+          const { data, error } = await supabaseServer.storage
+            .from(bucket)
+            .download(fileName);
+
+          if (error) {
+            console.error(`Error downloading PDF file ${fileName}:`, error);
+            continue;
+          }
+
+          // Convert to base64
+          const arrayBuffer = await data.arrayBuffer();
+          const base64 = Buffer.from(arrayBuffer).toString("base64");
+
+          if (data.type === 'text/plain') {
+            const text = new TextDecoder().decode(arrayBuffer);
+            contents.push({ text: `\n--- File: ${fileName} ---\n${text}\n---\n` });
+          } else {
+            contents.push({
+              inlineData: {
+                mimeType: data.type || 'application/pdf',
+                data: base64
+              }
+            });
+          }
+        } catch (error) {
+          console.error(`Error processing PDF file ${path.fileName}:`, error);
         }
       }
     }
@@ -384,13 +411,31 @@ export async function POST(request: Request) {
       analysisResult
     );
 
+    // Clean up uploaded files from storage
+    const cleanupPromises = [];
+    if (audioPaths) {
+      for (const path of audioPaths) {
+        cleanupPromises.push(
+          supabaseServer.storage.from(path.bucket).remove([path.fileName])
+        );
+      }
+    }
+    if (pdfPaths) {
+      for (const path of pdfPaths) {
+        cleanupPromises.push(
+          supabaseServer.storage.from(path.bucket).remove([path.fileName])
+        );
+      }
+    }
+    await Promise.all(cleanupPromises);
+
     return NextResponse.json({
       id: savedAnalysis.id,
       caseName: savedAnalysis.caseName,
       riskScore: savedAnalysis.riskScore,
     });
   } catch (error) {
-    console.error("Error analyzing single case:", error);
+    console.error("Error analyzing case:", error);
     return NextResponse.json(
       { error: "Failed to analyze case" },
       { status: 500 }

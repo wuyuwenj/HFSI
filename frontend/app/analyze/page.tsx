@@ -29,7 +29,7 @@ const AnalyzePage: React.FC = () => {
       const isBulkMode = mode === 'bulk' || (pdfFiles && pdfFiles.length > 1 && !documents && (!audioFiles || audioFiles.length === 0));
 
       if (isBulkMode) {
-        // Bulk mode - use the bulk analyze endpoint
+        // Bulk mode - use the bulk analyze endpoint with streaming
         setLoadingMessage("Processing bulk analysis...");
         setLoadingSubMessage("Detecting and analyzing multiple cases...");
 
@@ -55,26 +55,122 @@ const AnalyzePage: React.FC = () => {
         });
 
         if (!response.ok) {
-          const errorData = await response.json();
-          throw new Error(errorData.error || 'Failed to analyze cases');
+          const errorText = await response.text();
+          throw new Error('Failed to analyze cases: ' + errorText);
         }
 
-        const result = await response.json();
+        // Check if we got a streaming response
+        const contentType = response.headers.get('content-type');
+        if (contentType?.includes('application/x-ndjson')) {
+          // Handle streaming response
+          const reader = response.body?.getReader();
+          const decoder = new TextDecoder();
+          let buffer = '';
+          let finalResult: any = null;
 
-        if (result.bulk && result.analyses) {
-          // Multiple cases were analyzed
-          setLoadingMessage("Complete!");
-          setLoadingSubMessage(`Successfully analyzed ${result.count} cases`);
+          if (reader) {
+            while (true) {
+              const { done, value } = await reader.read();
 
-          setTimeout(() => {
-            alert(`Successfully analyzed ${result.count} cases! Redirecting to dashboard...`);
-            window.location.href = '/dashboard'; // Full page reload to show new data
-          }, 500);
-        } else if (result.id) {
-          // Single case result from bulk mode (shouldn't happen but handle it)
-          router.push(`/analysis/${result.id}`);
+              if (done) break;
+
+              buffer += decoder.decode(value, { stream: true });
+              const lines = buffer.split('\n');
+              buffer = lines.pop() || '';
+
+              for (const line of lines) {
+                if (line.trim()) {
+                  try {
+                    const data = JSON.parse(line);
+
+                    if (data.type === 'progress') {
+                      setProgress(data.current);
+                      setTotalCases(data.total);
+                      setLoadingMessage(data.message || 'Processing...');
+                      setLoadingSubMessage(
+                        data.caseName
+                          ? `Case ${data.current + 1} of ${data.total}: ${data.caseName}`
+                          : `Processing case ${data.current} of ${data.total}`
+                      );
+                    } else if (data.type === 'complete') {
+                      finalResult = data;
+                    } else if (data.type === 'error') {
+                      throw new Error(data.error || 'Analysis failed');
+                    }
+                  } catch (e) {
+                    console.error('Error parsing stream:', e);
+                  }
+                }
+              }
+            }
+          }
+
+          if (finalResult && finalResult.bulk && finalResult.analyses) {
+            // Multiple cases were analyzed
+            setLoadingMessage("Complete!");
+            setLoadingSubMessage(`Successfully analyzed ${finalResult.count} cases`);
+
+            // Mark new analyses in localStorage
+            const newAnalyses: Record<string, number> = {};
+            const now = Date.now();
+            finalResult.analyses.forEach((analysis: any) => {
+              if (analysis.id) {
+                newAnalyses[analysis.id] = now;
+              }
+            });
+
+            // Get existing new analyses and merge
+            const existingNew = localStorage.getItem('evidex_new_analyses');
+            const existing = existingNew ? JSON.parse(existingNew) : {};
+            const merged = { ...existing, ...newAnalyses };
+            localStorage.setItem('evidex_new_analyses', JSON.stringify(merged));
+
+            setTimeout(() => {
+              alert(`Successfully analyzed ${finalResult.count} cases! Redirecting to dashboard...`);
+              window.location.href = '/dashboard';
+            }, 500);
+          } else {
+            throw new Error('Invalid response format from server.');
+          }
         } else {
-          throw new Error('Invalid response format from server.');
+          // Non-streaming response (single case or old format)
+          const result = await response.json();
+
+          if (result.bulk && result.analyses) {
+            setLoadingMessage("Complete!");
+            setLoadingSubMessage(`Successfully analyzed ${result.count} cases`);
+
+            // Mark new analyses in localStorage
+            const newAnalyses: Record<string, number> = {};
+            const now = Date.now();
+            result.analyses.forEach((analysis: any) => {
+              if (analysis.id) {
+                newAnalyses[analysis.id] = now;
+              }
+            });
+
+            // Get existing new analyses and merge
+            const existingNew = localStorage.getItem('evidex_new_analyses');
+            const existing = existingNew ? JSON.parse(existingNew) : {};
+            const merged = { ...existing, ...newAnalyses };
+            localStorage.setItem('evidex_new_analyses', JSON.stringify(merged));
+
+            setTimeout(() => {
+              alert(`Successfully analyzed ${result.count} cases! Redirecting to dashboard...`);
+              window.location.href = '/dashboard';
+            }, 500);
+          } else if (result.id) {
+            // Mark single analysis as new
+            const now = Date.now();
+            const existingNew = localStorage.getItem('evidex_new_analyses');
+            const existing = existingNew ? JSON.parse(existingNew) : {};
+            existing[result.id] = now;
+            localStorage.setItem('evidex_new_analyses', JSON.stringify(existing));
+
+            router.push(`/analysis/${result.id}`);
+          } else {
+            throw new Error('Invalid response format from server.');
+          }
         }
       } else {
         // Single person mode - analyze normally
@@ -110,6 +206,13 @@ const AnalyzePage: React.FC = () => {
         const result = await response.json();
 
         if (result.id) {
+          // Mark single analysis as new
+          const now = Date.now();
+          const existingNew = localStorage.getItem('evidex_new_analyses');
+          const existing = existingNew ? JSON.parse(existingNew) : {};
+          existing[result.id] = now;
+          localStorage.setItem('evidex_new_analyses', JSON.stringify(existing));
+
           router.push(`/analysis/${result.id}`);
         } else {
           throw new Error('Invalid response format from server.');

@@ -9,6 +9,8 @@ const TranscribePage: React.FC = () => {
   const [transcription, setTranscription] = useState<TranscriptionEntry[]>([]);
   const [formattedText, setFormattedText] = useState('');
   const [error, setError] = useState<string | null>(null);
+  const [speakerNames, setSpeakerNames] = useState<Record<string, string>>({});
+  const [isEditingNames, setIsEditingNames] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleFileSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -47,11 +49,45 @@ const TranscribePage: React.FC = () => {
 
       setTranscription(data.entries);
       setFormattedText(data.formattedTranscript);
+
+      // Initialize speaker names mapping with detected speakers
+      const uniqueSpeakers = Array.from(new Set(data.entries.map((e: TranscriptionEntry) => e.speaker))) as string[];
+      const initialNames: Record<string, string> = {};
+      uniqueSpeakers.forEach((speaker: string) => {
+        initialNames[speaker] = speaker; // Default to original speaker label
+      });
+      setSpeakerNames(initialNames);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'An error occurred');
     } finally {
       setIsLoading(false);
     }
+  };
+
+  const handleSpeakerNameChange = (originalSpeaker: string, newName: string) => {
+    setSpeakerNames(prev => ({
+      ...prev,
+      [originalSpeaker]: newName || originalSpeaker
+    }));
+  };
+
+  const getUpdatedTranscript = (): string => {
+    let updatedText = formattedText;
+
+    // Replace each speaker label with the custom name
+    Object.entries(speakerNames).forEach(([original, custom]) => {
+      if (custom && custom !== original) {
+        // Replace "Speaker X:" with "Custom Name:"
+        const regex = new RegExp(`${original}:`, 'g');
+        updatedText = updatedText.replace(regex, `${custom}:`);
+      }
+    });
+
+    return updatedText;
+  };
+
+  const getDisplaySpeaker = (speaker: string): string => {
+    return speakerNames[speaker] || speaker;
   };
 
   const getSpeakerColor = (speaker: string): string => {
@@ -180,6 +216,56 @@ const TranscribePage: React.FC = () => {
                   </div>
                 </div>
 
+                {/* Speaker Names Editor */}
+                <div className="mb-6 bg-slate-700 rounded-lg p-5">
+                  <div className="flex items-center justify-between mb-4">
+                    <h3 className="text-lg font-semibold text-white">Speaker Names</h3>
+                    <button
+                      onClick={() => setIsEditingNames(!isEditingNames)}
+                      className="px-3 py-1.5 text-sm bg-blue-600 text-white rounded-md hover:bg-blue-500 transition duration-200 flex items-center gap-2"
+                    >
+                      <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
+                        <path d="M13.586 3.586a2 2 0 112.828 2.828l-.793.793-2.828-2.828.793-.793zM11.379 5.793L3 14.172V17h2.828l8.38-8.379-2.83-2.828z" />
+                      </svg>
+                      {isEditingNames ? 'Done' : 'Edit Names'}
+                    </button>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {Object.entries(speakerNames).map(([original, custom]) => (
+                      <div key={original} className="flex items-center gap-3">
+                        <div className="flex-shrink-0">
+                          <span className={`font-semibold ${getSpeakerColor(original)}`}>
+                            {original}
+                          </span>
+                        </div>
+                        <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 text-gray-500 flex-shrink-0" viewBox="0 0 20 20" fill="currentColor">
+                          <path fillRule="evenodd" d="M12.293 5.293a1 1 0 011.414 0l4 4a1 1 0 010 1.414l-4 4a1 1 0 01-1.414-1.414L14.586 11H3a1 1 0 110-2h11.586l-2.293-2.293a1 1 0 010-1.414z" clipRule="evenodd" />
+                        </svg>
+                        {isEditingNames ? (
+                          <input
+                            type="text"
+                            value={custom}
+                            onChange={(e) => handleSpeakerNameChange(original, e.target.value)}
+                            placeholder={original}
+                            className="flex-1 px-3 py-2 bg-slate-800 border border-slate-600 rounded-md text-white placeholder-gray-500 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition duration-200"
+                          />
+                        ) : (
+                          <span className="flex-1 px-3 py-2 bg-slate-800 rounded-md text-white">
+                            {custom}
+                          </span>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+
+                  {isEditingNames && (
+                    <p className="mt-3 text-sm text-gray-400">
+                      💡 Tip: Enter custom names for each speaker. The transcript will be updated when you download it.
+                    </p>
+                  )}
+                </div>
+
                 {/* Transcript Display */}
                 <div className="bg-slate-900 rounded-lg p-6 max-h-96 overflow-y-auto">
                   {transcription.map((entry, index) => (
@@ -190,7 +276,7 @@ const TranscribePage: React.FC = () => {
                         </span>
                         <div className="flex-1">
                           <span className={`font-semibold ${getSpeakerColor(entry.speaker)}`}>
-                            {entry.speaker}:
+                            {getDisplaySpeaker(entry.speaker)}:
                           </span>
                           <p className="text-gray-300 mt-1">{entry.dialogue}</p>
                         </div>
@@ -202,7 +288,8 @@ const TranscribePage: React.FC = () => {
                 {/* Download Button */}
                 <button
                   onClick={() => {
-                    const blob = new Blob([formattedText], { type: 'text/plain' });
+                    const updatedTranscript = getUpdatedTranscript();
+                    const blob = new Blob([updatedTranscript], { type: 'text/plain' });
                     const url = URL.createObjectURL(blob);
                     const a = document.createElement('a');
                     a.href = url;
@@ -210,12 +297,17 @@ const TranscribePage: React.FC = () => {
                     a.click();
                     URL.revokeObjectURL(url);
                   }}
-                  className="mt-4 w-full py-2 px-4 bg-slate-700 text-white rounded-md hover:bg-slate-600 transition duration-200 flex items-center justify-center gap-2"
+                  className="mt-4 w-full py-2 px-4 bg-green-600 text-white rounded-md hover:bg-green-500 transition duration-200 flex items-center justify-center gap-2"
                 >
                   <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
                     <path fillRule="evenodd" d="M3 17a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm3.293-7.707a1 1 0 011.414 0L9 10.586V3a1 1 0 112 0v7.586l1.293-1.293a1 1 0 111.414 1.414l-3 3a1 1 0 01-1.414 0l-3-3a1 1 0 010-1.414z" clipRule="evenodd" />
                   </svg>
                   Download Transcript
+                  {Object.values(speakerNames).some((name, i) => name !== Object.keys(speakerNames)[i]) && (
+                    <span className="ml-2 px-2 py-0.5 bg-green-700 text-white text-xs rounded-full">
+                      with custom names
+                    </span>
+                  )}
                 </button>
               </div>
             </div>
